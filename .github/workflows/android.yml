@@ -51,6 +51,18 @@ jobs:
       - name: Build debug APK, unit tests, lint
         run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug
 
+      - name: Check APE/WavPack decoders are linked into the APK
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            SO="$(mktemp)"
+            unzip -p "$APK" "lib/$abi/liballmeyn_usb.so" > "$SO"
+            for sym in ff_ape_decoder ff_wavpack_decoder ff_ape_demuxer ff_wv_demuxer; do
+              grep -qa "$sym" "$SO" || strings "$SO" | grep -qi "${sym#ff_}" || { echo "$abi: $sym missing"; exit 1; }
+            done
+            echo "$abi: APE + WavPack decoders linked ($(stat -c %s "$SO") bytes)"
+          done
+
       - uses: actions/upload-artifact@v6
         if: always()
         with:
