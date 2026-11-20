@@ -1,0 +1,31 @@
+name: Android build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # ubuntu-latest already ships the Android SDK (ANDROID_HOME is preset).
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Build debug APK
+        run: ./gradlew --no-daemon assembleDebug lintDebug
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: all-meyn-player-debug
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/reports/lint-results-debug.html
