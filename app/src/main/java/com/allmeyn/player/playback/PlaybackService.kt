@@ -71,7 +71,7 @@ class PlaybackService : MediaSessionService() {
     override fun onDestroy() {
         val driver = (application as AllMeynApp).usbDriver
         driverListener?.let { driver.removeListener(it) }
-        dacVolumePlayer?.release()
+        dacVolumePlayer?.detachFromDriver()
         session?.run {
             player.release()
             release()

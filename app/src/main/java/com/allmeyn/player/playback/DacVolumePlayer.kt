@@ -37,7 +37,8 @@ class DacVolumePlayer(player: Player, private val driver: UsbAudioDriver) : Forw
         driver.addListener(driverListener)
     }
 
-    fun release() {
+    /** Stops listening to the driver (the player itself is released through the session). */
+    fun detachFromDriver() {
         driver.removeListener(driverListener)
     }
 
