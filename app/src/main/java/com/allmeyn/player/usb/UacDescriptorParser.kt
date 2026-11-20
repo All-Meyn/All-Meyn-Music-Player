@@ -28,7 +28,12 @@ object UacDescriptorParser {
         var formatBits: Long = 0, // UAC2 bmFormats
         val discreteRates: MutableList<Int> = mutableListOf(), // UAC1 only
         val endpoints: MutableList<Endpoint> = mutableListOf(),
-    )
+    ) {
+        /** UAC2 bmFormats bit 0 = PCM; UAC1 format type I is always PCM. Others are DSD/raw. */
+        val isPcm get() = uacVersion == 1 || formatBits and 1L != 0L
+        val dataEndpoint get() = endpoints.firstOrNull { it.isOut && !it.isFeedback }
+        val feedbackEndpoint get() = endpoints.firstOrNull { it.isFeedback }
+    }
 
     data class ClockSource(val id: Int, val attributes: Int)
 
@@ -39,6 +44,7 @@ object UacDescriptorParser {
         val playbackAlts: List<StreamingAlt>,
     )
 
+    private const val DESC_CONFIG = 0x02
     private const val DESC_INTERFACE = 0x04
     private const val DESC_ENDPOINT = 0x05
     private const val DESC_CS_INTERFACE = 0x24
@@ -56,11 +62,16 @@ object UacDescriptorParser {
         var inControl = false
         var currentAlt: StreamingAlt? = null
 
+        var configsSeen = 0
         var i = 0
         while (i + 1 < raw.size) {
             val len = raw.u8(i)
             if (len < 2 || i + len > raw.size) break
             when (raw.u8(i + 1)) {
+                DESC_CONFIG -> {
+                    // Android returns every configuration; only parse the first (active) one.
+                    if (++configsSeen > 1) break
+                }
                 DESC_INTERFACE -> {
                     val number = raw.u8(i + 2)
                     val alt = raw.u8(i + 3)
@@ -149,7 +160,7 @@ object UacDescriptorParser {
             val data = a.endpoints.firstOrNull { it.isOut && !it.isFeedback }
             val fb = a.endpoints.firstOrNull { it.isFeedback }
             append("If ${a.interfaceNumber} alt ${a.altSetting}: ${a.channels} ch · ")
-            append("${a.bitResolution}-bit in ${a.subslotBytes}-byte slot")
+            append("${a.bitResolution}-bit in ${a.subslotBytes}-byte slot · ${formatName(a)}")
             if (data != null) {
                 append(" · EP 0x%02X %s · max %d B".format(data.address, syncName(data.syncType), data.maxPacketSize))
             }
@@ -157,6 +168,13 @@ object UacDescriptorParser {
             if (a.discreteRates.isNotEmpty()) append(" · rates ${a.discreteRates.joinToString()}")
             appendLine()
         }
+    }
+
+    private fun formatName(a: StreamingAlt): String = when {
+        a.uacVersion == 1 -> "PCM"
+        a.formatBits == 1L -> "PCM"
+        a.formatBits and (1L shl 31) != 0L -> "RAW/DSD (0x%08X)".format(a.formatBits)
+        else -> "formats 0x%08X".format(a.formatBits)
     }
 
     private fun syncName(t: Int) = when (t) {
