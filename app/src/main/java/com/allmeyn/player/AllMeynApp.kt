@@ -3,6 +3,7 @@ package com.allmeyn.player
 import android.app.Application
 import androidx.media3.common.util.UnstableApi
 import com.allmeyn.player.audio.AllMeynRenderersFactory
+import com.allmeyn.player.library.MusicLibrary
 import com.allmeyn.player.plugin.LevelMeterPlugin
 import com.allmeyn.player.plugin.PluginHost
 import com.allmeyn.player.usb.UsbAudioDriver
@@ -16,6 +17,9 @@ class AllMeynApp : Application() {
 
     /** Custom USB audio driver; app-scoped so a running stream survives activity recreation. */
     val usbDriver by lazy { UsbAudioDriver(this) }
+
+    /** Music library: folders the user picked, scanned and cached. */
+    val library by lazy { MusicLibrary(this) }
 
     /** Example capture plugin. Register your own plugin here too. */
     val levelMeter = LevelMeterPlugin()
