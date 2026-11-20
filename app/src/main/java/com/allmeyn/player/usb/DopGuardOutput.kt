@@ -4,6 +4,7 @@ import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioOutput
 import androidx.media3.exoplayer.audio.ForwardingAudioOutput
+import com.allmeyn.player.decode.DecodeRegistry
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import kotlin.math.roundToInt
@@ -11,17 +12,20 @@ import kotlin.math.roundToInt
 /**
  * Safety net for Android (AudioTrack) outputs: if DoP-packed DSD ever reaches one, it would play
  * as loud noise, so this output detects the DoP marker pattern (alternating 0x05 / 0xFA in each
- * sample's top byte) and plays silence instead. Normally DSD is reloaded as PCM before that can
- * happen; this covers the gaps (e.g. the DAC refusing the DoP rate).
+ * sample's top byte) and plays silence instead. Native DSD has no markers, so a native DSD stream
+ * (recognised by its shape, see DecodeRegistry.isNativeDsd) is silenced from the start. Normally
+ * DSD is reloaded as PCM before that can happen; this covers the gaps (e.g. the DAC refusing the
+ * rate).
  */
 @UnstableApi
 class DopGuardOutput private constructor(
     output: AudioOutput,
     private val encoding: Int,
     private val channels: Int,
+    startMuted: Boolean = false,
 ) : ForwardingAudioOutput(output) {
 
-    private var muted = false
+    private var muted = startMuted
     private var zeros: ByteBuffer = ByteBuffer.allocateDirect(0)
 
     override fun write(buffer: ByteBuffer, encodedAccessUnitCount: Int, presentationTimeUs: Long): Boolean {
@@ -65,6 +69,9 @@ class DopGuardOutput private constructor(
         private val DOP_RATES = setOf(176_400, 192_000, 352_800, 384_000, 705_600, 768_000)
 
         fun wrapIfNeeded(output: AudioOutput, encoding: Int, sampleRate: Int, channels: Int): AudioOutput {
+            if (DecodeRegistry.isNativeDsd(encoding, channels, sampleRate)) {
+                return DopGuardOutput(output, encoding, channels, startMuted = true)
+            }
             val maybeDop = sampleRate in DOP_RATES && channels in 1..2 && encoding in setOf(
                 C.ENCODING_PCM_24BIT, C.ENCODING_PCM_32BIT, C.ENCODING_PCM_FLOAT,
             )

@@ -14,7 +14,13 @@ enum {
     IN_S24 = 2,  // packed, 3 bytes
     IN_S32 = 3,
     IN_FLOAT = 4,
+    // Raw DSD for the DAC's native DSD mode, carried by Media3 as 16-bit PCM with two "samples"
+    // per DSD channel (see decoder/dsd.c). The bytes are copied into the 32-bit slots unchanged.
+    IN_DSD_NATIVE = 5,
 };
+
+/** DSD idle pattern: what a DAC in native DSD mode gets when there is nothing to play. */
+#define DSD_IDLE_BYTE 0x69
 
 /**
  * Single-producer (playback thread) / single-consumer (USB event thread) ring of frames already

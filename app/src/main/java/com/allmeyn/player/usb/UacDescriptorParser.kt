@@ -31,6 +31,9 @@ object UacDescriptorParser {
     ) {
         /** UAC2 bmFormats bit 0 = PCM; UAC1 format type I is always PCM. Others are DSD/raw. */
         val isPcm get() = uacVersion == 1 || formatBits and 1L != 0L
+
+        /** UAC2 bmFormats bit 31 = TYPE_I_RAW_DATA: on DSD DACs, the native DSD mode. */
+        val isRawData get() = uacVersion == 2 && formatBits and (1L shl 31) != 0L
         val dataEndpoint get() = endpoints.firstOrNull { it.isOut && !it.isFeedback }
         val feedbackEndpoint get() = endpoints.firstOrNull { it.isFeedback }
     }

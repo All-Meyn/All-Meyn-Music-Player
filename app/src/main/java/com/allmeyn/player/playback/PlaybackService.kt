@@ -13,6 +13,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.allmeyn.player.audio.AllMeynRenderersFactory
 import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.decode.DecodingDataSource
+import com.allmeyn.player.decode.DsdOutput
 import com.allmeyn.player.usb.UsbAudioDriver
 
 /** Owns the player so music keeps playing in the background with a media notification. */
@@ -38,10 +39,12 @@ class PlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(!driver.isActive)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             // DSF/DFF/APE/WavPack are decoded natively and fed to Media3 as WAV; DSD goes out as
-            // DoP (native DSD on the DAC) while the USB driver is on, otherwise as PCM.
+            // native DSD or DoP while the USB driver is on, otherwise as PCM.
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(
-                    DecodingDataSource.Factory(this, DefaultDataSource.Factory(this)) { driver.supportsDop },
+                    DecodingDataSource.Factory(this, DefaultDataSource.Factory(this)) {
+                        DsdOutput(dop = driver.supportsDop, nativeMaxRate = driver.nativeDsdMaxRate)
+                    },
                 ),
             )
             .build()
@@ -64,8 +67,14 @@ class PlaybackService : MediaSessionService() {
                 if (reason == UsbAudioDriver.Reason.DISCONNECTED) player.pause()
                 if (player.mediaItemCount == 0 || reason == UsbAudioDriver.Reason.FAILED) return
                 val uri = player.currentMediaItem?.localConfiguration?.uri
-                if (uri != null && DecodeRegistry.isDsd(uri)) {
-                    // DSD must switch between DoP and PCM: reload so the file is decoded afresh.
+                val isDsd = uri != null && DecodeRegistry.isDsd(uri)
+                // Native DSD on/off only matters for DSD; leave other songs alone.
+                if (reason == UsbAudioDriver.Reason.DSD_MODE_CHANGED && !isDsd) {
+                    DecodeRegistry.resetModes()
+                    return
+                }
+                if (isDsd) {
+                    // DSD must switch between native / DoP / PCM: reload so the file is decoded afresh.
                     reloadInPlace(player)
                 } else {
                     // Seeking in place rebuilds the audio output, which then picks the new route.

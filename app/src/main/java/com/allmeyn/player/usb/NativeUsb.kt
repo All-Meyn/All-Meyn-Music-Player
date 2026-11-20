@@ -18,6 +18,7 @@ object NativeUsb {
     const val IN_S24 = 2
     const val IN_S32 = 3
     const val IN_FLOAT = 4
+    const val IN_DSD_NATIVE = 5 // raw DSD as 4 x 16-bit per frame, copied into 2 x 32-bit slots
 
     /** Read-only probe: wraps [fd] with libusb and returns a summary. */
     @JvmStatic external fun probe(fd: Int): String

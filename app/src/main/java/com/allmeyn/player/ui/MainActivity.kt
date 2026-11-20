@@ -290,6 +290,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         androidDac = androidDac,
                         onDriver = ::setDriver,
                         onDacVolume = app.usbDriver::setVolumeStep,
+                        onNativeDsd = { app.usbDriver.nativeDsdEnabled = it },
                         onProbe = { cb -> app.usbDriver.probe(cb) },
                         onTone = { rate, bits -> player.pause(); app.usbDriver.startTone(rate, bits) {} },
                         pluginName = app.levelMeter.name,

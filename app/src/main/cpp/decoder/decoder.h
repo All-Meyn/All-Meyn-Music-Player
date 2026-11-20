@@ -23,6 +23,7 @@ typedef struct {
     int64_t total_frames;
     int is_dsd;  // source is DSD (DSF/DFF)
     int is_dop;  // output is DoP: DSD packed in 24-bit PCM, only for a DoP-capable DAC
+    int is_native;  // output is raw DSD for the DAC's native DSD mode (see dsd.c)
     char desc[96];
 } DecInfo;
 
@@ -38,8 +39,12 @@ struct Decoder {
 
 int dec_sample_bytes(int format);
 
-/** DSF/DFF. [dop]: pack DSD as DoP (when the rate allows); otherwise convert to PCM. NULL if not DSD. */
-Decoder *dsd_open(int fd, int dop, char *err, int err_len);
+/**
+ * DSF/DFF. Output, first that applies: raw DSD for the DAC's native mode when the DSD rate is at
+ * most [native_max_rate] (0 = never) and the file is stereo; DoP when [dop] and the rate allows;
+ * otherwise PCM. NULL if not DSD.
+ */
+Decoder *dsd_open(int fd, int dop, uint32_t native_max_rate, char *err, int err_len);
 
 /** APE/WavPack through FFmpeg. NULL if not supported or FFmpeg isn't built in. */
 Decoder *ff_open(int fd, char *err, int err_len);
