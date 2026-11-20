@@ -3,60 +3,62 @@ package com.allmeyn.player.ui
 import android.Manifest
 import android.content.ComponentName
 import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.OpenableColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
-import androidx.media3.common.PlaybackException
-import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -66,14 +68,12 @@ import com.allmeyn.player.playback.PlaybackService
 import com.allmeyn.player.usb.UsbAudioDriver
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.delay
-import kotlin.math.roundToInt
 
 @UnstableApi
 class MainActivity : ComponentActivity() {
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller by mutableStateOf<MediaController?>(null)
-    private val pendingItems = mutableListOf<MediaItem>()
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -86,11 +86,7 @@ class MainActivity : ComponentActivity() {
         val app = application as AllMeynApp
         // Launched by plugging in the DAC ("Always open All-Meyn"): permission is granted now.
         app.usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
-        setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
-                PlayerScreen(controller, app, ::titleFor, ::enqueue)
-            }
-        }
+        setContent { AllMeynTheme { AppRoot(controller, app) } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -105,32 +101,8 @@ class MainActivity : ComponentActivity() {
         controllerFuture = future
         future.addListener({
             // Ignore a connection that onStop() already released.
-            if (controllerFuture !== future) return@addListener
-            val c = future.get()
-            controller = c
-            if (pendingItems.isNotEmpty()) {
-                addAndPlay(c, pendingItems.toList())
-                pendingItems.clear()
-            }
+            if (controllerFuture === future) controller = future.get()
         }, ContextCompat.getMainExecutor(this))
-    }
-
-    /**
-     * The file picker sends this activity to the background, which releases the controller, and
-     * its result arrives before the controller reconnects. Queue items until it's back.
-     */
-    private fun enqueue(items: List<MediaItem>) {
-        val c = controller
-        if (c == null) pendingItems += items else addAndPlay(c, items)
-    }
-
-    private fun addAndPlay(c: MediaController, items: List<MediaItem>) {
-        val wasEmpty = c.mediaItemCount == 0
-        c.addMediaItems(items)
-        if (wasEmpty) {
-            c.prepare()
-            c.play()
-        }
     }
 
     override fun onStop() {
@@ -139,245 +111,232 @@ class MainActivity : ComponentActivity() {
         controller = null
         super.onStop()
     }
+}
 
-    private fun titleFor(uri: Uri): String =
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-            if (it.moveToFirst()) it.getString(0) else null
-        } ?: uri.lastPathSegment ?: "Unknown"
+@Composable
+private fun AllMeynTheme(content: @Composable () -> Unit) {
+    val dark = isSystemInDarkTheme()
+    val context = LocalContext.current
+    val scheme = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        dark -> darkColorScheme()
+        else -> lightColorScheme()
+    }
+    MaterialTheme(colorScheme = scheme) { Surface(Modifier.fillMaxSize()) { content() } }
+}
+
+private enum class Tab(val label: String) { Albums("Albums"), Artists("Artists"), Tracks("Tracks"), Folders("Folders") }
+
+/** Screens pushed on top of the tabs. */
+private sealed interface Route {
+    data class AlbumRoute(val key: String) : Route
+    data class ArtistRoute(val name: String) : Route
+    data class FolderRoute(val path: String) : Route
+    data object NowPlayingRoute : Route
+    data object SettingsRoute : Route
 }
 
 @UnstableApi
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PlayerScreen(
-    controller: MediaController?,
-    app: AllMeynApp,
-    titleFor: (Uri) -> String,
-    onAddItems: (List<MediaItem>) -> Unit,
-) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val dac by app.usbDac.status.collectAsStateWithLifecycle()
+private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
+    val player = rememberPlayerUi(controller)
+    val library by app.library.state.collectAsStateWithLifecycle()
+    val driver by app.usbDriver.state.collectAsStateWithLifecycle()
+    val androidDac by app.usbDac.status.collectAsStateWithLifecycle()
 
-    var isPlaying by remember { mutableStateOf(false) }
-    var currentIndex by remember { mutableIntStateOf(-1) }
-    var titles by remember { mutableStateOf(emptyList<String>()) }
-    var playerError by remember { mutableStateOf<String?>(null) }
+    var tab by rememberSaveable { mutableStateOf(Tab.Albums) }
+    val stack = remember { mutableStateListOf<Route>() }
+    val top = stack.lastOrNull()
+    BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
 
-    DisposableEffect(controller) {
-        val c = controller
-        fun sync(p: Player) {
-            isPlaying = p.isPlaying
-            if (p.playerError == null && p.playbackState != Player.STATE_IDLE) playerError = null
-            currentIndex = p.currentMediaItemIndex
-            titles = (0 until p.mediaItemCount).map {
-                p.getMediaItemAt(it).mediaMetadata.title?.toString() ?: "Track ${it + 1}"
-            }
-        }
-        val listener = object : Player.Listener {
-            override fun onEvents(player: Player, events: Player.Events) = sync(player)
-
-            override fun onPlayerError(error: PlaybackException) {
-                // Media3 nests the real reason; show the whole chain so failures aren't silent.
-                val chain = generateSequence(error as Throwable) { it.cause }.take(4)
-                    .joinToString(" ← ") { "${it.javaClass.simpleName}: ${it.message}" }
-                playerError = "${error.errorCodeName}\n$chain"
-            }
-        }
-        c?.addListener(listener)
-        c?.let(::sync)
-        onDispose { c?.removeListener(listener) }
+    val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) app.library.addFolder(uri)
     }
 
-    val usbDriver = app.usbDriver
-    val driver by usbDriver.state.collectAsStateWithLifecycle()
-    var probeText by remember { mutableStateOf("") }
-    var driverStatus by remember { mutableStateOf("") }
-    LaunchedEffect(driver.active) {
-        if (!driver.active) driverStatus = ""
-        while (driver.active) {
-            usbDriver.status { driverStatus = it }
-            delay(500)
-        }
-    }
-    fun setDriver(on: Boolean) {
-        val c = controller
-        val wasPlaying = c?.isPlaying == true
-        c?.pause() // PlaybackService rebuilds the audio output once the route has changed
-        val done: (String) -> Unit = { if (wasPlaying) c?.play() }
-        if (on) usbDriver.enable(done) else usbDriver.disable(done)
-    }
-    var toneActive by remember { mutableStateOf(false) }
-    fun startTone(rate: Int, bits: Int) {
-        controller?.pause()
-        toneActive = true
-        usbDriver.startTone(rate, bits) { probeText = it }
-    }
-
+    // Live readouts: plugin meter, decoder, driver status.
     var peak by remember { mutableFloatStateOf(0f) }
-    var formatLabel by remember { mutableStateOf("—") }
+    var pluginFormat by remember { mutableStateOf("—") }
     var decoderLabel by remember { mutableStateOf<String?>(null) }
     var decoderError by remember { mutableStateOf<String?>(null) }
+    var driverStatus by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
         while (true) {
             peak = app.levelMeter.peak
-            formatLabel = app.levelMeter.formatLabel
+            pluginFormat = app.levelMeter.formatLabel
             decoderLabel = DecodeRegistry.lastDescription
             decoderError = DecodeRegistry.lastError
             delay(100)
         }
     }
-
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isEmpty()) return@rememberLauncherForActivityResult
-        val items = uris.map { uri ->
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            }
-            MediaItem.Builder()
-                .setUri(uri)
-                .setMediaMetadata(MediaMetadata.Builder().setTitle(titleFor(uri)).build())
-                .build()
+    LaunchedEffect(driver.active) {
+        if (!driver.active) driverStatus = ""
+        while (driver.active) {
+            app.usbDriver.status { driverStatus = it }
+            delay(500)
         }
-        onAddItems(items)
     }
+    fun setDriver(on: Boolean) {
+        val wasPlaying = player.controllerIsPlaying
+        player.pause() // PlaybackService rebuilds the audio output once the route has changed
+        val done: (String) -> Unit = { player.resumeIf(wasPlaying) }
+        if (on) app.usbDriver.enable(done) else app.usbDriver.disable(done)
+    }
+    val sourceLabel = decoderLabel ?: pluginFormat.takeIf { it != "—" }.orEmpty()
+    val route = driverStatus.lineSequence().firstOrNull { it.startsWith("Player output:") }?.substringAfter(": ").orEmpty()
 
-    Scaffold { padding ->
-        Column(
-            Modifier.fillMaxSize().padding(padding).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            Text("All-Meyn Player", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-
-            val problem = listOfNotNull(playerError, decoderError?.let { "Decoder: $it" }).joinToString("\n")
-            if (problem.isNotEmpty()) {
-                Card(Modifier.fillMaxWidth()) {
-                    SelectionContainer {
-                        Text(
-                            "Playback error\n$problem",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(12.dp),
-                        )
-                    }
-                }
-            }
-
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    if (driver.active) {
-                        Text(driver.deviceName ?: "USB DAC", fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "All-Meyn USB driver · bit-perfect · " + driverStatus.substringBefore('\n'),
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                    } else {
-                        Text(dac.deviceName ?: "Phone output", fontWeight = FontWeight.SemiBold)
-                        Text(dac.detail, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("USB driver", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                        OutlinedButton(onClick = {
-                            probeText = "Probing…"
-                            usbDriver.probe { probeText = it }
-                        }) { Text("Probe DAC") }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Bit-perfect USB driver", fontWeight = FontWeight.Medium)
-                            Text(
-                                "Bypasses Android's mixer. Stays on and comes back when the DAC is plugged in.",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                        Switch(checked = driver.active, enabled = !driver.busy, onCheckedChange = { setDriver(it) })
-                    }
-                    if (driver.message.isNotEmpty()) Text(driver.message, style = MaterialTheme.typography.bodySmall)
-                    driver.volume?.let { v ->
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                if (v.muted || v.step == 0) "DAC volume · muted" else "DAC volume · %.1f dB".format(v.db),
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.width(140.dp),
-                            )
-                            // Commit on release: each change is a USB control request.
-                            var dragging by remember { mutableStateOf<Float?>(null) }
-                            Slider(
-                                value = dragging ?: v.step.toFloat(),
-                                onValueChange = { dragging = it },
-                                onValueChangeFinished = {
-                                    dragging?.let { usbDriver.setVolumeStep(it.roundToInt()) }
-                                    dragging = null
-                                },
-                                valueRange = 0f..v.maxStep.toFloat(),
-                                modifier = Modifier.weight(1f),
-                            )
-                        }
-                    }
-                    if (driverStatus.isNotEmpty()) {
-                        Text(driverStatus, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                    }
-                    if (driver.active) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Test tone", style = MaterialTheme.typography.bodySmall)
-                            OutlinedButton(onClick = { startTone(44100, 16) }) { Text("44.1k/16") }
-                            OutlinedButton(onClick = { startTone(96000, 32) }) { Text("96k/32") }
-                        }
-                    }
-                    if (probeText.isNotEmpty()) {
-                        // Own scroll area so a long report doesn't push the playlist off screen.
-                        SelectionContainer(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
-                            Text(probeText, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
-                        }
-                    }
-                }
-            }
-
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("Plugin capture · ${app.levelMeter.name}", fontWeight = FontWeight.SemiBold)
-                    Text(formatLabel, style = MaterialTheme.typography.bodySmall)
-                    decoderLabel?.let { Text("Decoder: $it", style = MaterialTheme.typography.bodySmall) }
-                    Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(progress = { peak }, modifier = Modifier.fillMaxWidth())
-                }
-            }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = { controller?.seekToPreviousMediaItem() }) { Text("Prev") }
-                Button(onClick = {
-                    controller?.let {
-                        if (it.isPlaying) {
-                            it.pause()
-                        } else {
-                            // The tone took over the driver's stream: rebuild the music output first.
-                            if (toneActive) it.seekTo(it.currentPosition)
-                            toneActive = false
-                            it.play()
-                        }
-                    }
-                }) { Text(if (isPlaying) "Pause" else "Play") }
-                OutlinedButton(onClick = { controller?.seekToNextMediaItem() }) { Text("Next") }
-                OutlinedButton(onClick = {
-                    picker.launch(arrayOf("audio/*", "application/octet-stream", "application/ogg", "application/x-ape"))
-                }) { Text("Add") }
-            }
-
-            LazyColumn(Modifier.fillMaxWidth()) {
-                itemsIndexed(titles) { index, title ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
                     Text(
-                        text = title,
-                        fontWeight = if (index == currentIndex) FontWeight.Bold else FontWeight.Normal,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { controller?.run { seekTo(index, 0); play() } }
-                            .padding(vertical = 10.dp),
+                        when (top) {
+                            is Route.AlbumRoute -> library.albums.firstOrNull { it.key == top.key }?.title.orEmpty()
+                            is Route.ArtistRoute -> top.name
+                            is Route.FolderRoute -> top.path.substringAfterLast('/')
+                            Route.NowPlayingRoute -> "Now playing"
+                            Route.SettingsRoute -> "Settings"
+                            null -> "All-Meyn"
+                        },
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
+                },
+                navigationIcon = {
+                    if (top != null) {
+                        IconButton(onClick = { stack.removeAt(stack.lastIndex) }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
+                        }
+                    }
+                },
+                actions = {
+                    if (top != Route.SettingsRoute) {
+                        IconButton(onClick = { stack.add(Route.SettingsRoute) }) { Icon(Icons.Filled.Settings, "Settings") }
+                    }
+                },
+            )
+        },
+        bottomBar = {
+            Column {
+                if (player.hasMedia && top != Route.NowPlayingRoute) {
+                    MiniPlayer(player) { stack.add(Route.NowPlayingRoute) }
+                }
+                if (top == null) {
+                    NavigationBar {
+                        Tab.entries.forEach { t ->
+                            NavigationBarItem(
+                                selected = tab == t,
+                                onClick = { tab = t },
+                                icon = {
+                                    Icon(
+                                        when (t) {
+                                            Tab.Albums -> PlayerIcons.Album
+                                            Tab.Artists -> Icons.Filled.Person
+                                            Tab.Tracks -> Icons.AutoMirrored.Filled.List
+                                            Tab.Folders -> PlayerIcons.Folder
+                                        },
+                                        t.label,
+                                    )
+                                },
+                                label = { Text(t.label) },
+                            )
+                        }
+                    }
                 }
             }
+        },
+    ) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            val problem = listOfNotNull(player.error, decoderError?.let { "Decoder: $it" }).joinToString("\n")
+            if (problem.isNotEmpty()) ErrorBanner(problem) {
+                player.error = null
+                DecodeRegistry.lastError = null
+            }
+            Box(Modifier.weight(1f)) {
+                val playing = player.currentUri
+                when (top) {
+                    is Route.AlbumRoute -> library.albums.firstOrNull { it.key == top.key }
+                        ?.let { AlbumDetail(it, playing, player) }
+                    is Route.ArtistRoute -> library.artists.firstOrNull { it.name == top.name }
+                        ?.let { a -> ArtistDetail(a, { stack.add(Route.AlbumRoute(it.key)) }, player) }
+                    is Route.FolderRoute -> FolderBrowser(library.folderTree, top.path, { stack.add(Route.FolderRoute(it)) }, playing, player)
+                    Route.NowPlayingRoute -> NowPlaying(player, sourceLabel, peak, driver, route, app.usbDriver::setVolumeStep)
+                    Route.SettingsRoute -> SettingsScreen(
+                        library = library,
+                        folderLabel = app.library::folderLabel,
+                        onAddFolder = { pickFolder.launch(null) },
+                        onRemoveFolder = app.library::removeFolder,
+                        onRescan = app.library::rescan,
+                        driver = driver,
+                        driverStatus = driverStatus,
+                        androidDac = androidDac,
+                        onDriver = ::setDriver,
+                        onDacVolume = app.usbDriver::setVolumeStep,
+                        onProbe = { cb -> app.usbDriver.probe(cb) },
+                        onTone = { rate, bits -> player.pause(); app.usbDriver.startTone(rate, bits) {} },
+                        pluginName = app.levelMeter.name,
+                        pluginFormat = pluginFormat,
+                        decoderLabel = decoderLabel,
+                        peak = peak,
+                    )
+                    null -> if (library.tracks.isEmpty()) {
+                        EmptyLibrary(library.scanning || !library.loaded, library.progress) { pickFolder.launch(null) }
+                    } else {
+                        Column {
+                            if (library.scanning) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                            }
+                            when (tab) {
+                                Tab.Albums -> AlbumsGrid(library.albums) { stack.add(Route.AlbumRoute(it.key)) }
+                                Tab.Artists -> ArtistsList(library.artists) { stack.add(Route.ArtistRoute(it.name)) }
+                                Tab.Tracks -> TracksList(library.tracks, playing, player)
+                                Tab.Folders -> FolderBrowser(library.folderTree, null, { stack.add(Route.FolderRoute(it)) }, playing, player)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MiniPlayer(player: PlayerUi, onOpen: () -> Unit) {
+    Surface(tonalElevation = 3.dp) {
+        Column {
+            val d = player.durationMs.coerceAtLeast(1)
+            LinearProgressIndicator(
+                progress = { (player.positionMs.toFloat() / d).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().height(2.dp),
+            )
+            Row(
+                Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Artwork(player.artPath, Modifier.size(44.dp), corner = 6.dp)
+                Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+                    Text(player.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
+                    Text(player.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                }
+                IconButton(onClick = { player.togglePlay() }) {
+                    Icon(if (player.isPlaying) PlayerIcons.Pause else PlayerIcons.Play, "Play/pause")
+                }
+                IconButton(onClick = { player.next() }) { Icon(PlayerIcons.Next, "Next") }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ErrorBanner(text: String, onDismiss: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.errorContainer) {
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.Top) {
+            SelectionContainer(Modifier.weight(1f)) {
+                Text(
+                    "Playback error\n$text", color = MaterialTheme.colorScheme.onErrorContainer,
+                    style = MaterialTheme.typography.bodySmall, maxLines = 6, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(onClick = onDismiss) { Icon(Icons.Filled.Close, "Dismiss") }
         }
     }
 }
