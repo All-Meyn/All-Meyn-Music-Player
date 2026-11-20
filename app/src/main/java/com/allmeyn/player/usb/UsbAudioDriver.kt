@@ -223,8 +223,15 @@ class UsbAudioDriver(private val context: Context) {
         descriptor = desc
         streamToken.incrementAndGet()
 
-        // Hardware volume: start from whatever the DAC is set to now (never jump louder).
-        volume = UsbDacVolume.open(conn, desc)
+        // Hardware volume: the DAC resets it when powered up (the KA17 comes back at 0 dB), so
+        // restore the level the user last chose. With nothing saved, keep the DAC's own level.
+        volume = UsbDacVolume.open(conn, desc)?.also { v ->
+            if (prefs.contains(KEY_VOLUME_RAW)) {
+                val step = v.scale.stepForRaw(prefs.getInt(KEY_VOLUME_RAW, v.scale.floorRaw))
+                v.setStep(step)
+                if (v.hasMute) v.setMuted(prefs.getBoolean(KEY_VOLUME_MUTED, false) || step <= 0)
+            }
+        }
         val vs = readVolumeState()
         val name = device.productName ?: "USB DAC"
         main.post {
@@ -274,6 +281,13 @@ class UsbAudioDriver(private val context: Context) {
             val v = volume ?: return@execute
             op(v)
             val vs = readVolumeState()
+            // Remember in dB (not steps) so it survives a different step count.
+            if (vs != null) {
+                prefs.edit()
+                    .putInt(KEY_VOLUME_RAW, v.scale.rawForStep(vs.step))
+                    .putBoolean(KEY_VOLUME_MUTED, vs.muted)
+                    .apply()
+            }
             main.post {
                 _state.value = _state.value.copy(volume = vs)
                 listeners.forEach { it.onVolumeChanged(vs) }
@@ -400,6 +414,8 @@ class UsbAudioDriver(private val context: Context) {
     companion object {
         private const val TAG = "UsbAudioDriver"
         private const val KEY_ENABLED = "enabled"
+        private const val KEY_VOLUME_RAW = "dac_volume_raw" // 1/256 dB
+        private const val KEY_VOLUME_MUTED = "dac_volume_muted"
 
         /** Wait this long after a DAC is plugged in before taking it from Android. */
         const val ATTACH_SETTLE_MS = 1500L
