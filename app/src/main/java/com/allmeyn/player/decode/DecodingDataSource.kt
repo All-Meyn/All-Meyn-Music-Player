@@ -3,6 +3,7 @@ package com.allmeyn.player.decode
 import android.content.ContentResolver
 import android.content.Context
 import android.net.Uri
+import android.util.Log
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
@@ -51,7 +52,15 @@ class DecodingDataSource(
     override fun addTransferListener(transferListener: TransferListener) =
         upstream.addTransferListener(transferListener)
 
-    override fun open(dataSpec: DataSpec): Long {
+    override fun open(dataSpec: DataSpec): Long = try {
+        openInternal(dataSpec)
+    } catch (e: Throwable) {
+        DecodeRegistry.lastError = "${dataSpec.uri.lastPathSegment}: ${e.javaClass.simpleName}: ${e.message}"
+        Log.e(TAG, "open failed for ${dataSpec.uri}", e)
+        throw if (e is IOException) e else IOException(e)
+    }
+
+    private fun openInternal(dataSpec: DataSpec): Long {
         val fromStart = dataSpec.position == 0L
         val dop = (if (fromStart) null else DecodeRegistry.dopFor(dataSpec.uri)) ?: dopAllowed()
         val h = openNative(dataSpec.uri, dop)
@@ -115,7 +124,10 @@ class DecodingDataSource(
         }
         if (scratchPos >= scratchLen) {
             val n = NativeDecoder.read(handle, scratch, 0, scratch.size)
-            if (n < 0) throw IOException("Decode error in ${uri?.lastPathSegment}")
+            if (n < 0) {
+                DecodeRegistry.lastError = "Decode error in ${uri?.lastPathSegment}"
+                throw IOException("Decode error in ${uri?.lastPathSegment}")
+            }
             if (n == 0) return C.RESULT_END_OF_INPUT // decoder ended a little early: fine
             scratchLen = n
             scratchPos = min(skipInFrame, n)
@@ -126,6 +138,10 @@ class DecodingDataSource(
         scratchPos += n
         bytesRemaining -= n
         return n
+    }
+
+    private companion object {
+        const val TAG = "DecodingDataSource"
     }
 
     override fun getUri(): Uri? = if (delegating) upstream.uri else uri

@@ -17,6 +17,10 @@ object DecodeRegistry {
     @Volatile var dopActive: Boolean = false
         private set
 
+    /** Last decoder failure (shown in the UI), cleared when a file opens fine. */
+    @Volatile var lastError: String? = null
+        internal set
+
     fun dopFor(uri: Uri): Boolean? = dopByUri[uri]
 
     fun isDsd(uri: Uri) = uri in dsdUris
@@ -26,6 +30,7 @@ object DecodeRegistry {
         if (isDsd) dsdUris += uri
         lastDescription = description
         dopActive = isDop
+        lastError = null
     }
 
     /** Forget DoP choices so the next load decides again (e.g. after the driver turns on/off). */
