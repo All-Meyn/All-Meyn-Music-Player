@@ -64,12 +64,12 @@ class DecodingDataSource(
         val fromStart = dataSpec.position == 0L
         val dop = (if (fromStart) null else DecodeRegistry.dopFor(dataSpec.uri)) ?: dopAllowed()
         val h = openNative(dataSpec.uri, dop)
-        if (h == 0L) {
+        if (h == NativeDecoder.NOT_OURS) {
             delegating = true
             if (fromStart) DecodeRegistry.onPlainFile()
             return upstream.open(dataSpec)
         }
-        if (h < 0) throw IOException("Can't decode ${dataSpec.uri.lastPathSegment}: ${NativeDecoder.lastError()}")
+        if (h == NativeDecoder.OPEN_ERROR) throw IOException("Can't decode ${dataSpec.uri.lastPathSegment}: ${NativeDecoder.lastError()}")
         handle = h
         uri = dataSpec.uri
 
@@ -98,7 +98,7 @@ class DecodingDataSource(
         return bytesRemaining
     }
 
-    /** 0 = not ours, <0 = ours but failed, >0 = handle. Only local files (content:// or file://). */
+    /** [NativeDecoder.NOT_OURS], [NativeDecoder.OPEN_ERROR], or a handle (any other value, may be negative). Local files only. */
     private fun openNative(uri: Uri, dop: Boolean): Long {
         if (uri.scheme != ContentResolver.SCHEME_CONTENT && uri.scheme != ContentResolver.SCHEME_FILE) return 0
         val pfd = try {
@@ -154,8 +154,8 @@ class DecodingDataSource(
             delegating = false
             upstream.close()
         }
-        if (handle > 0) NativeDecoder.close(handle)
-        handle = 0
+        if (handle != NativeDecoder.NOT_OURS) NativeDecoder.close(handle)
+        handle = NativeDecoder.NOT_OURS
         uri = null
         header = ByteArray(0)
         headerPos = 0

@@ -20,9 +20,14 @@ object NativeDecoder {
         System.loadLibrary("allmeyn_usb")
     }
 
+    const val NOT_OURS = 0L
+    const val OPEN_ERROR = -1L
+
     /**
      * Opens [fd] (duplicated natively, so the caller may close it). [dop]: output DSD as DoP.
-     * Returns a handle, 0 if the file isn't a format we decode, or -1 on error ([lastError]).
+     * Returns a handle, [NOT_OURS] (0) if the file isn't a format we decode, or [OPEN_ERROR] (-1)
+     * on error ([lastError]). A handle is a native pointer and may be NEGATIVE: arm64 Android tags
+     * the top byte of heap pointers. Never test it with `< 0` / `> 0`.
      */
     @JvmStatic external fun open(fd: Int, dop: Boolean): Long
 
