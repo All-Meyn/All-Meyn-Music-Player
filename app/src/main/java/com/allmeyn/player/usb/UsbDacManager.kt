@@ -122,7 +122,13 @@ class UsbDacManager(context: Context, private val floatOutputEnabled: Boolean) {
             null
         }
         val label = "${format.sampleRate} Hz ${encodingLabel(outputEncoding)}"
-        if (match != null && audioManager.setPreferredMixerAttributes(mediaAttributes, device, match)) {
+        val applied = match != null && try {
+            audioManager.setPreferredMixerAttributes(mediaAttributes, device, match)
+        } catch (e: RuntimeException) {
+            Log.w(TAG, "setPreferredMixerAttributes failed", e)
+            false
+        }
+        if (applied) {
             _status.value = DacStatus(name, true, "Bit-perfect · $label")
         } else {
             clear(device)

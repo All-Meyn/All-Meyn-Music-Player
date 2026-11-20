@@ -5,6 +5,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Needed for setPreferredMixerAttributes (bit-perfect USB). Normal permission, auto-granted. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <!-- USB DACs are optional; the app also plays through the phone speaker. -->
     <uses-feature android:name="android.hardware.usb.host" android:required="false" />
