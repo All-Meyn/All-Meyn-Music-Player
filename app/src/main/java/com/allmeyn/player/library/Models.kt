@@ -97,10 +97,12 @@ object LibraryIndex {
         compareBy<Track> { it.discNo }.thenBy { if (it.trackNo > 0) it.trackNo else Int.MAX_VALUE }.thenBy(byName) { it.fileName }
 
     fun folderTree(tracks: List<Track>): List<FolderNode> {
+        // Note: named "own", not "tracks": inside this local class a bare "tracks" would resolve to
+        // the function parameter (locals win over members) and every folder would get every track.
         class Mutable(val path: String, val name: String) {
             val children = sortedMapOf<String, Mutable>(byName)
-            val tracks = mutableListOf<Track>()
-            fun freeze(): FolderNode = FolderNode(path, name, children.values.map { it.freeze() }, tracks.sortedWith(trackOrder))
+            val own = mutableListOf<Track>()
+            fun freeze(): FolderNode = FolderNode(path, name, children.values.map { it.freeze() }, own.sortedWith(trackOrder))
         }
         val top = sortedMapOf<String, Mutable>(byName)
         for (t in tracks) {
@@ -114,7 +116,7 @@ object LibraryIndex {
                 node = n
                 level = n.children
             }
-            node!!.tracks += t
+            node!!.own += t
         }
         return top.values.map { it.freeze() }
     }
