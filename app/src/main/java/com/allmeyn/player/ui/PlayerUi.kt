@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackException
@@ -37,7 +38,82 @@ class PlayerUi(private val controllerProvider: () -> MediaController?) {
     var hasMedia by mutableStateOf(false)
     var error by mutableStateOf<String?>(null)
 
+    /** Bumped whenever the queue or its play order may have changed; screens re-read [queue]. */
+    var queueVersion by mutableIntStateOf(0)
+
     private val c get() = controllerProvider()
+
+    internal fun onQueueEvents(events: Player.Events) {
+        if (events.containsAny(
+                Player.EVENT_TIMELINE_CHANGED, Player.EVENT_MEDIA_ITEM_TRANSITION,
+                Player.EVENT_SHUFFLE_MODE_ENABLED_CHANGED, Player.EVENT_REPEAT_MODE_CHANGED,
+            )
+        ) queueVersion++
+    }
+
+    /** One row of the queue. [index] is the item's position in the player's list. */
+    data class QueueEntry(val index: Int, val uri: String, val title: String, val artist: String, val artPath: String)
+
+    /** The queue in the order it will play (shuffle order when shuffle is on). */
+    fun queue(): List<QueueEntry> {
+        val ctrl = c ?: return emptyList()
+        val timeline = ctrl.currentTimeline
+        if (timeline.isEmpty) return emptyList()
+        val shuffled = ctrl.shuffleModeEnabled
+        val out = ArrayList<QueueEntry>(ctrl.mediaItemCount)
+        var i = timeline.getFirstWindowIndex(shuffled)
+        while (i != C.INDEX_UNSET && out.size < ctrl.mediaItemCount) {
+            val item = ctrl.getMediaItemAt(i)
+            val md = item.mediaMetadata
+            out += QueueEntry(
+                index = i,
+                uri = item.localConfiguration?.uri?.toString() ?: item.mediaId,
+                title = md.title?.toString().orEmpty(),
+                artist = md.artist?.toString().orEmpty(),
+                artPath = md.artworkUri?.takeIf { it.scheme == "file" }?.path.orEmpty(),
+            )
+            i = timeline.getNextWindowIndex(i, Player.REPEAT_MODE_OFF, shuffled)
+        }
+        return out
+    }
+
+    val currentIndex get() = c?.currentMediaItemIndex ?: C.INDEX_UNSET
+
+    fun jumpTo(index: Int) {
+        val ctrl = c ?: return
+        ctrl.seekTo(index, 0)
+        if (ctrl.playbackState == Player.STATE_IDLE) ctrl.prepare()
+        ctrl.play()
+    }
+
+    fun removeAt(index: Int) = c?.removeMediaItem(index)
+    fun move(from: Int, to: Int) = c?.moveMediaItem(from, to)
+    fun clearUpcoming() {
+        val ctrl = c ?: return
+        val cur = ctrl.currentMediaItemIndex
+        if (cur + 1 < ctrl.mediaItemCount) ctrl.removeMediaItems(cur + 1, ctrl.mediaItemCount)
+        if (cur > 0) ctrl.removeMediaItems(0, cur)
+    }
+
+    /** Puts [track] right after the current song, or starts it if nothing is loaded. */
+    fun playNext(track: Track) {
+        val ctrl = c ?: return
+        if (ctrl.mediaItemCount == 0) return playTracks(listOf(track), 0)
+        ctrl.addMediaItem(ctrl.currentMediaItemIndex + 1, track.toMediaItem())
+    }
+
+    /** Adds [track] so it plays last, or starts it if nothing is loaded. */
+    fun addToQueue(track: Track) {
+        val ctrl = c ?: return
+        if (ctrl.mediaItemCount == 0) return playTracks(listOf(track), 0)
+        if (ctrl.shuffleModeEnabled) {
+            // QueueShuffleOrder plays an inserted song right after the one before it in the list,
+            // so insert after the song that currently plays last.
+            ctrl.addMediaItem(ctrl.currentTimeline.getLastWindowIndex(true) + 1, track.toMediaItem())
+        } else {
+            ctrl.addMediaItem(track.toMediaItem())
+        }
+    }
 
     internal fun sync(p: Player) {
         connected = true
@@ -127,7 +203,10 @@ fun rememberPlayerUi(controller: MediaController?): PlayerUi {
     DisposableEffect(controller) {
         val c = controller
         val listener = object : Player.Listener {
-            override fun onEvents(player: Player, events: Player.Events) = bound.sync(player)
+            override fun onEvents(player: Player, events: Player.Events) {
+                bound.sync(player)
+                bound.onQueueEvents(events)
+            }
             override fun onPlayerError(error: PlaybackException) = bound.onError(error)
         }
         c?.addListener(listener)

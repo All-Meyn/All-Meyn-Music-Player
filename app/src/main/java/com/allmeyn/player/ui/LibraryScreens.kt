@@ -1,6 +1,8 @@
 package com.allmeyn.player.ui
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,12 +23,18 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -116,6 +124,7 @@ fun AlbumDetail(album: Album, playingUri: String, player: PlayerUi) {
                 t, playing = t.uri == playingUri,
                 leading = { Text(if (t.trackNo > 0) "${t.trackNo}" else "${i + 1}", Modifier.width(32.dp), style = MaterialTheme.typography.bodySmall) },
                 subtitle = if (t.artist != album.artist && t.artist.isNotBlank()) t.artist else t.qualityLabel,
+                player = player,
             ) { player.playTracks(album.tracks, i) }
         }
     }
@@ -161,6 +170,7 @@ fun TracksList(tracks: List<Track>, playingUri: String, player: PlayerUi) {
                 t, playing = t.uri == playingUri,
                 leading = { Artwork(t.art, Modifier.size(44.dp), corner = 4.dp) },
                 subtitle = listOf(t.artist, t.album).filter { it.isNotBlank() }.joinToString(" · "),
+                player = player,
             ) { player.playTracks(sorted, i) }
         }
     }
@@ -193,6 +203,7 @@ fun FolderBrowser(roots: List<FolderNode>, path: String?, onOpen: (String) -> Un
                 t, playing = t.uri == playingUri,
                 leading = { Icon(PlayerIcons.Note, null, Modifier.width(32.dp)) },
                 subtitle = t.fileName + " · " + t.qualityLabel,
+                player = player,
             ) { player.playTracks(tracks, i) }
         }
     }
@@ -208,13 +219,29 @@ private fun findFolder(nodes: List<FolderNode>, path: String): FolderNode? {
 
 private fun countTracks(n: FolderNode): Int = n.tracks.size + n.children.sumOf { countTracks(it) }
 
+/** A song in a list. Tap plays; long-press offers "Play next" and "Add to queue". */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-fun TrackRow(track: Track, playing: Boolean, leading: @Composable () -> Unit, subtitle: String, onClick: () -> Unit) {
+fun TrackRow(
+    track: Track,
+    playing: Boolean,
+    leading: @Composable () -> Unit,
+    subtitle: String,
+    player: PlayerUi,
+    onClick: () -> Unit,
+) {
     val color = if (playing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+    var menu by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp),
+        Modifier.fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = { menu = true })
+            .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            DropdownMenuItem(text = { Text("Play next") }, onClick = { menu = false; player.playNext(track) })
+            DropdownMenuItem(text = { Text("Add to queue") }, onClick = { menu = false; player.addToQueue(track) })
+        }
         Box(Modifier.padding(end = 12.dp), contentAlignment = Alignment.Center) { leading() }
         Column(Modifier.weight(1f)) {
             Text(track.title, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (playing) FontWeight.Bold else FontWeight.Normal)

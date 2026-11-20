@@ -18,24 +18,24 @@ import kotlin.math.min
  * because a byte position in the WAV maps to an exact frame in the decoder. Everything else is
  * passed to [upstream] untouched.
  *
- * DSD becomes DoP (bit-exact DSD for the DAC) when [dopAllowed] says so at the time the file is
- * first opened, otherwise PCM. The choice sticks for that file until it's reloaded, since the
- * already-parsed WAV header must stay valid for later seeks.
+ * DSD becomes native DSD or DoP (both bit-exact DSD for the DAC) when [dsdOutput] allows it at the
+ * time the file is first opened, otherwise PCM. The choice sticks for that file until it's
+ * reloaded, since the already-parsed WAV header must stay valid for later seeks.
  */
 @UnstableApi
 class DecodingDataSource(
     private val context: Context,
     private val upstream: DataSource,
-    private val dopAllowed: () -> Boolean,
+    private val dsdOutput: () -> DsdOutput,
 ) : DataSource {
 
     class Factory(
         private val context: Context,
         private val upstream: DataSource.Factory,
-        private val dopAllowed: () -> Boolean,
+        private val dsdOutput: () -> DsdOutput,
     ) : DataSource.Factory {
         override fun createDataSource(): DataSource =
-            DecodingDataSource(context.applicationContext, upstream.createDataSource(), dopAllowed)
+            DecodingDataSource(context.applicationContext, upstream.createDataSource(), dsdOutput)
     }
 
     private var handle = 0L
@@ -62,8 +62,8 @@ class DecodingDataSource(
 
     private fun openInternal(dataSpec: DataSpec): Long {
         val fromStart = dataSpec.position == 0L
-        val dop = (if (fromStart) null else DecodeRegistry.dopFor(dataSpec.uri)) ?: dopAllowed()
-        val h = openNative(dataSpec.uri, dop)
+        val output = (if (fromStart) null else DecodeRegistry.outputFor(dataSpec.uri)) ?: dsdOutput()
+        val h = openNative(dataSpec.uri, output)
         if (h == NativeDecoder.NOT_OURS) {
             delegating = true
             if (fromStart) DecodeRegistry.onPlainFile()
@@ -78,7 +78,10 @@ class DecodingDataSource(
         val channels = info[1].toInt()
         val format = info[2].toInt()
         val frames = info[3]
-        DecodeRegistry.onOpened(dataSpec.uri, info[4] != 0L, info[5] != 0L, NativeDecoder.describe(h), fromStart)
+        DecodeRegistry.onOpened(
+            dataSpec.uri, isDsd = info[4] != 0L, isDop = info[5] != 0L, isNative = info[6] != 0L,
+            nativeFrameRate = rate, output = output, description = NativeDecoder.describe(h), fromStart = fromStart,
+        )
 
         header = Rf64.header(rate, channels, format, frames)
         val frameBytes = channels * DecodedFormat.sampleBytes(format)
@@ -99,14 +102,14 @@ class DecodingDataSource(
     }
 
     /** [NativeDecoder.NOT_OURS], [NativeDecoder.OPEN_ERROR], or a handle (any other value, may be negative). Local files only. */
-    private fun openNative(uri: Uri, dop: Boolean): Long {
+    private fun openNative(uri: Uri, output: DsdOutput): Long {
         if (uri.scheme != ContentResolver.SCHEME_CONTENT && uri.scheme != ContentResolver.SCHEME_FILE) return 0
         val pfd = try {
             context.contentResolver.openFileDescriptor(uri, "r")
         } catch (e: Exception) {
             null
         } ?: return 0
-        return pfd.use { NativeDecoder.open(it.fd, dop) } // native keeps its own dup of the fd
+        return pfd.use { NativeDecoder.open(it.fd, output.dop, output.nativeMaxRate) } // native keeps its own dup of the fd
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {

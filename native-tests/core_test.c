@@ -43,6 +43,14 @@ int main(void) {
     // 5. s16 -> 32-bit slot
     int16_t v = -12345; int32_t s = sample_to_s32((uint8_t*)&v, IN_S16); uint8_t o4[4]; s32_to_slot(o4, 4, s);
     int32_t back4; memcpy(&back4, o4, 4); assert(back4 == (int32_t)((uint32_t)(int32_t)v << 16));
+    // 6. native DSD: bytes copied into 32-bit stereo slots unchanged; 4 x 16-bit in = 1 frame
+    Ring d; assert(ring_init(&d, 6, 8) == 0);
+    uint8_t dsd[8 * 5]; for (int i = 0; i < (int) sizeof dsd; i++) dsd[i] = (uint8_t) (i * 37 + 11);
+    assert(ring_write_converted(&d, dsd, sizeof dsd + 3, IN_DSD_NATIVE, 4, 4, 2) == sizeof dsd);
+    uint8_t dout[8 * 5]; assert(ring_read(&d, dout, 5) == 5 && !memcmp(dout, dsd, sizeof dsd));
+    // wrong slot layout is refused rather than garbled
+    assert(ring_write_converted(&d, dsd, 8, IN_DSD_NATIVE, 4, 3, 2) == 0);
+    ring_free(&d);
     puts("core tests passed");
     return 0;
 }

@@ -23,6 +23,14 @@ class LevelMeterPlugin : AudioCapturePlugin {
     private var encoding = C.ENCODING_INVALID
 
     override fun onConfigure(format: PcmFormat) {
+        if (format.isNativeDsd) {
+            encoding = C.ENCODING_INVALID
+            peak = 0f
+            val dsdRate = format.sampleRate * 32
+            val dsdClass = 64 * dsdRate / (if (dsdRate % 44_100 == 0) 2_822_400 else 3_072_000)
+            formatLabel = "DSD$dsdClass native (DSD bits, not metered) · ${format.channelCount / 2} ch"
+            return
+        }
         if (format.isDop) {
             // DoP carries DSD bits, not samples: nothing meaningful to meter.
             encoding = C.ENCODING_INVALID

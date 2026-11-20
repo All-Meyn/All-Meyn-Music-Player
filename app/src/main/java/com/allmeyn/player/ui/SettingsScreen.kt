@@ -57,6 +57,8 @@ fun SettingsScreen(
     androidDac: DacStatus,
     onDriver: (Boolean) -> Unit,
     onDacVolume: (Int) -> Unit,
+    onNativeDsd: (Boolean) -> Unit,
+    onAutoForDsd: (Boolean) -> Unit,
     onProbe: ((String) -> Unit) -> Unit,
     onTone: (Int, Int) -> Unit,
     pluginName: String,
@@ -107,6 +109,26 @@ fun SettingsScreen(
                 Switch(checked = driver.active, enabled = !driver.busy, onCheckedChange = onDriver)
             }
             if (driver.message.isNotEmpty()) Text(driver.message, style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Native DSD", fontWeight = FontWeight.Medium)
+                    Text(
+                        "Sends DSD in the DAC's own DSD mode (up to DSD512). Off: DoP (up to DSD256) for DACs that misbehave.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = driver.nativeDsd, onCheckedChange = onNativeDsd)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Turn on for DSD", fontWeight = FontWeight.Medium)
+                    Text(
+                        "Switches the USB driver on by itself when a DSD song starts, so it plays as DSD instead of PCM. Other apps can't use the DAC while the driver is on.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = driver.autoForDsd, onCheckedChange = onAutoForDsd)
+            }
             driver.volume?.let { v ->
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(

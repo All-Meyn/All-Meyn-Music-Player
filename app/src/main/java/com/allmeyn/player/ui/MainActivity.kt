@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -133,6 +134,8 @@ private sealed interface Route {
     data class ArtistRoute(val name: String) : Route
     data class FolderRoute(val path: String) : Route
     data object NowPlayingRoute : Route
+    data object QueueRoute : Route
+    data object SearchRoute : Route
     data object SettingsRoute : Route
 }
 
@@ -195,6 +198,8 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                             is Route.ArtistRoute -> top.name
                             is Route.FolderRoute -> top.path.substringAfterLast('/')
                             Route.NowPlayingRoute -> "Now playing"
+                            Route.QueueRoute -> "Queue"
+                            Route.SearchRoute -> "Search"
                             Route.SettingsRoute -> "Settings"
                             null -> "All-Meyn"
                         },
@@ -209,6 +214,12 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                     }
                 },
                 actions = {
+                    if (top == null) {
+                        IconButton(onClick = { stack.add(Route.SearchRoute) }) { Icon(Icons.Filled.Search, "Search") }
+                    }
+                    if (top == Route.NowPlayingRoute) {
+                        IconButton(onClick = { stack.add(Route.QueueRoute) }) { Icon(PlayerIcons.Queue, "Queue") }
+                    }
                     if (top != Route.SettingsRoute) {
                         IconButton(onClick = { stack.add(Route.SettingsRoute) }) { Icon(Icons.Filled.Settings, "Settings") }
                     }
@@ -259,6 +270,14 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                     is Route.ArtistRoute -> library.artists.firstOrNull { it.name == top.name }
                         ?.let { a -> ArtistDetail(a, { stack.add(Route.AlbumRoute(it.key)) }, player) }
                     is Route.FolderRoute -> FolderBrowser(library.folderTree, top.path, { stack.add(Route.FolderRoute(it)) }, playing, player)
+                    Route.QueueRoute -> QueueScreen(player)
+                    Route.SearchRoute -> SearchScreen(
+                        library = library,
+                        playingUri = playing,
+                        player = player,
+                        onOpenAlbum = { stack.add(Route.AlbumRoute(it.key)) },
+                        onOpenArtist = { stack.add(Route.ArtistRoute(it.name)) },
+                    )
                     Route.NowPlayingRoute -> NowPlaying(player, sourceLabel, peak, driver, route, app.usbDriver::setVolumeStep)
                     Route.SettingsRoute -> SettingsScreen(
                         library = library,
@@ -271,6 +290,8 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         androidDac = androidDac,
                         onDriver = ::setDriver,
                         onDacVolume = app.usbDriver::setVolumeStep,
+                        onNativeDsd = { app.usbDriver.nativeDsdEnabled = it },
+                        onAutoForDsd = { app.usbDriver.autoEnableForDsd = it },
                         onProbe = { cb -> app.usbDriver.probe(cb) },
                         onTone = { rate, bits -> player.pause(); app.usbDriver.startTone(rate, bits) {} },
                         pluginName = app.levelMeter.name,

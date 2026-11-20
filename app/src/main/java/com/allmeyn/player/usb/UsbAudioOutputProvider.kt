@@ -48,7 +48,7 @@ class UsbAudioOutputProvider(
     private fun usable(formatConfig: FormatConfig): Boolean {
         val f = formatConfig.format
         return driver.isActive && MimeTypes.AUDIO_RAW == f.sampleMimeType &&
-            driver.supportsPcm(f.pcmEncoding, f.channelCount) && !formatConfig.enableTunneling
+            driver.supportsFormat(f.pcmEncoding, f.channelCount, f.sampleRate) && !formatConfig.enableTunneling
     }
 
     override fun getFormatSupport(formatConfig: FormatConfig): FormatSupport =
@@ -65,7 +65,13 @@ class UsbAudioOutputProvider(
         return OutputConfig.Builder()
             .setEncoding(f.pcmEncoding)
             .setSampleRate(f.sampleRate)
-            .setChannelMask(if (f.channelCount == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO)
+            .setChannelMask(
+                when (f.channelCount) {
+                    1 -> AudioFormat.CHANNEL_OUT_MONO
+                    4 -> AudioFormat.CHANNEL_OUT_QUAD // native DSD: 2 x 16-bit per DSD channel
+                    else -> AudioFormat.CHANNEL_OUT_STEREO
+                },
+            )
             .setBufferSize(f.sampleRate * UsbAudioDriver.RING_MS / 1000 * frameBytes)
             .setAudioAttributes(formatConfig.audioAttributes)
             .setAudioSessionId(formatConfig.audioSessionId)
@@ -74,7 +80,7 @@ class UsbAudioOutputProvider(
 
     override fun getAudioOutput(config: OutputConfig): AudioOutput {
         val channels = Integer.bitCount(config.channelMask)
-        val driverCanTake = !config.isOffload && !config.isTunneling && driver.supportsPcm(config.encoding, channels)
+        val driverCanTake = !config.isOffload && !config.isTunneling && driver.supportsFormat(config.encoding, channels, config.sampleRate)
         if (driverCanTake && driver.isActive) {
             val r = driver.configureStream(config.encoding, config.sampleRate, channels)
             if (r.token != null) {

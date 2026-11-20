@@ -18,10 +18,10 @@ static jstring g_last_error_str(JNIEnv *env, const char *s) { return (*env)->New
 static char g_last_error[160];
 
 /** Returns a handle, 0 if the file isn't a format we decode, or -1 on error (see lastError). */
-JNIEXPORT jlong JNICALL JNI_FN(open)(JNIEnv *env, jclass clazz, jint fd, jboolean dop) {
+JNIEXPORT jlong JNICALL JNI_FN(open)(JNIEnv *env, jclass clazz, jint fd, jboolean dop, jint native_max_rate) {
     (void) env; (void) clazz;
     char err[160] = "";
-    Decoder *d = dsd_open(fd, dop, err, sizeof err);
+    Decoder *d = dsd_open(fd, dop, native_max_rate > 0 ? (uint32_t) native_max_rate : 0, err, sizeof err);
     if (!d && !err[0]) d = ff_open(fd, err, sizeof err);
     if (!d) {
         strncpy(g_last_error, err, sizeof g_last_error - 1);
@@ -41,13 +41,13 @@ JNIEXPORT jstring JNICALL JNI_FN(lastError)(JNIEnv *env, jclass clazz) {
     return g_last_error_str(env, g_last_error);
 }
 
-/** [sampleRate, channels, format, totalFrames, isDsd, isDop] */
+/** [sampleRate, channels, format, totalFrames, isDsd, isDop, isNative] */
 JNIEXPORT jlongArray JNICALL JNI_FN(info)(JNIEnv *env, jclass clazz, jlong handle) {
     (void) clazz;
     DecInfo *in = &((Handle *) (intptr_t) handle)->d->info;
-    jlong v[6] = {in->sample_rate, in->channels, in->format, in->total_frames, in->is_dsd, in->is_dop};
-    jlongArray a = (*env)->NewLongArray(env, 6);
-    (*env)->SetLongArrayRegion(env, a, 0, 6, v);
+    jlong v[7] = {in->sample_rate, in->channels, in->format, in->total_frames, in->is_dsd, in->is_dop, in->is_native};
+    jlongArray a = (*env)->NewLongArray(env, 7);
+    (*env)->SetLongArrayRegion(env, a, 0, 7, v);
     return a;
 }
 

@@ -13,6 +13,9 @@ import java.nio.ByteBuffer
  * @property bytesPerFrame Bytes in one frame (all channels).
  * @property isDop The stream is DSD packed as DoP (24-bit frames carrying DSD bits for the DAC),
  *   not real PCM. Don't process it as audio; it must reach the DAC unmodified.
+ * @property isNativeDsd The stream is raw DSD for the DAC's native DSD mode, carried as 16-bit
+ *   "PCM" with twice the channels (each pair of 16-bit samples is one 32-bit DSD word). Not audio;
+ *   it must reach the DAC unmodified. [sampleRate] is the DSD rate / 32.
  */
 data class PcmFormat(
     val encoding: Int,
@@ -20,6 +23,7 @@ data class PcmFormat(
     val channelCount: Int,
     val bytesPerFrame: Int,
     val isDop: Boolean = false,
+    val isNativeDsd: Boolean = false,
 )
 
 /**

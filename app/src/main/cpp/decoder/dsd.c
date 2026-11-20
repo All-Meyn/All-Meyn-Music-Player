@@ -1,4 +1,9 @@
-// DSF and DSDIFF (DFF) reader with two outputs:
+// DSF and DSDIFF (DFF) reader with three outputs:
+//  - Native: raw DSD for a DAC's native DSD mode (UAC2 raw-data alt setting, Linux DSD_U32_BE):
+//    per frame and channel 4 bytes, oldest byte first, oldest bit in each byte's MSB, at DSD
+//    rate / 32. Handed to Media3 as 16-bit PCM with twice the channels (2 samples = 4 bytes per
+//    DSD channel), because Media3 passes 16-bit PCM through untouched; the USB driver copies the
+//    bytes straight into the DAC's 32-bit slots. Stereo only. Bit-exact.
 //  - DoP (DSD over PCM, v1.1): 16 DSD bits per channel in each 24-bit sample, under an alternating
 //    0x05 / 0xFA marker byte, at DSD rate / 16. A DoP-capable DAC (the KA17 up to DoP256) plays
 //    it as native DSD. Bit-exact; nothing may alter the samples on the way.
@@ -33,6 +38,7 @@ typedef struct {
     int block;  // DSF: bytes per channel block (4096)
 
     int dop;
+    int native;
     int64_t out_frame;
 
     // PCM conversion
@@ -138,6 +144,23 @@ static int dop_read(Decoder *base, uint8_t *out, int max_frames) {
             p[1] = d->buf[c][2 * f];      // older byte, middle
             p[2] = marker;
             p += 3;
+        }
+    }
+    d->out_frame += frames;
+    return frames;
+}
+
+static int native_read(Decoder *base, uint8_t *out, int max_frames) {
+    Dsd *d = (Dsd *) base;
+    int64_t left = d->base.info.total_frames - d->out_frame;
+    int frames = left < max_frames ? (int) left : max_frames;
+    if (frames <= 0) return 0;
+    if (fetch(d, d->out_frame * 4, frames * 4)) return -1;
+    uint8_t *p = out;
+    for (int f = 0; f < frames; f++) {
+        for (int c = 0; c < d->channels; c++) {
+            memcpy(p, d->buf[c] + 4 * f, 4);  // oldest byte first, MSB = oldest bit
+            p += 4;
         }
     }
     d->out_frame += frames;
@@ -291,7 +314,7 @@ static int parse_dff(Dsd *d, char *err, int err_len) {
     return 0;
 }
 
-Decoder *dsd_open(int fd, int dop, char *err, int err_len) {
+Decoder *dsd_open(int fd, int dop, uint32_t native_max_rate, char *err, int err_len) {
     uint8_t magic[4];
     if (read_at(fd, magic, 4, 0)) return NULL;
     int is_dsf = !memcmp(magic, "DSD ", 4), is_dff = !memcmp(magic, "FRM8", 4);
@@ -324,8 +347,18 @@ Decoder *dsd_open(int fd, int dop, char *err, int err_len) {
     DecInfo *in = &d->base.info;
     in->channels = d->channels;
     in->is_dsd = 1;
-    d->dop = dop && d->dsd_rate <= MAX_DOP_RATE;
-    if (d->dop) {
+    d->native = native_max_rate > 0 && d->dsd_rate <= native_max_rate && d->channels == 2;
+    d->dop = !d->native && dop && d->dsd_rate <= MAX_DOP_RATE;
+    if (d->native) {
+        in->is_native = 1;
+        in->format = DEC_S16;
+        in->channels = 2 * d->channels;  // two 16-bit "samples" carry one 32-bit DSD word
+        in->sample_rate = (int) (d->dsd_rate / 32);
+        in->total_frames = d->bytes_per_ch / 4;
+        d->base.read = native_read;
+        snprintf(in->desc, sizeof in->desc, "%s DSD%d → native DSD %.4f MHz (bit-perfect)",
+                 d->is_dff ? "DFF" : "DSF", 64 * multiple, d->dsd_rate / 1e6);
+    } else if (d->dop) {
         in->is_dop = 1;
         in->format = DEC_S24;
         in->sample_rate = (int) (d->dsd_rate / 16);

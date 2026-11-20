@@ -89,7 +89,7 @@ static void check_file(const char *path, const char *name) {
     char err[128] = "";
     int fd = open(path, O_RDONLY);
     // PCM path
-    Decoder *d = dsd_open(fd, 0, err, sizeof err);
+    Decoder *d = dsd_open(fd, 0, 0, err, sizeof err);
     assert(d && "open pcm");
     assert(d->info.sample_rate == 176400 && d->info.channels == 2 && d->info.format == DEC_F32);
     assert(d->info.total_frames == NBITS / 16);
@@ -131,7 +131,7 @@ static void check_file(const char *path, const char *name) {
     assert(!memcmp(seg, pcm + 2 * 12345, sizeof(float) * 2 * 500));
     d->close(d);
     // DoP path
-    d = dsd_open(fd, 1, err, sizeof err);
+    d = dsd_open(fd, 1, 0, err, sizeof err);
     assert(d && d->info.is_dop && d->info.format == DEC_S24 && d->info.sample_rate == 176400);
     uint8_t *dop = malloc(3 * 2 * d->info.total_frames);
     got = 0;
@@ -148,6 +148,28 @@ static void check_file(const char *path, const char *name) {
     assert(!memcmp(s3, dop + 6 * 4321, 6));
     printf("%s DoP: %d frames bit-exact, markers alternate, seek OK · %s\n", name, got, d->info.desc);
     d->close(d);
+    // DoP is still chosen when native DSD isn't allowed up to this rate
+    d = dsd_open(fd, 1, RATE / 2, err, sizeof err);
+    assert(d && d->info.is_dop && !d->info.is_native);
+    d->close(d);
+    // Native path: wins over DoP when allowed; 4 bytes per channel per frame, oldest byte first
+    d = dsd_open(fd, 1, 24576000, err, sizeof err);
+    assert(d && d->info.is_native && !d->info.is_dop && d->info.is_dsd);
+    assert(d->info.format == DEC_S16 && d->info.channels == 4 && d->info.sample_rate == RATE / 32);
+    assert(d->info.total_frames == NBITS / 32);
+    uint8_t *nat = malloc(8 * d->info.total_frames);
+    got = 0;
+    while ((r = d->read(d, nat + 8 * got, 333)) > 0) got += r;
+    assert(got == NBITS / 32);
+    for (int fi = 0; fi < got; fi++)
+        for (int c = 0; c < 2; c++)
+            assert(!memcmp(nat + 8 * fi + 4 * c, &bits[c][4 * fi], 4));
+    d->seek(d, 2222);
+    uint8_t s8[8]; assert(d->read(d, s8, 1) == 1);
+    assert(!memcmp(s8, nat + 8 * 2222, 8));
+    printf("%s native: %d frames bit-exact, seek OK · %s\n", name, got, d->info.desc);
+    d->close(d);
+    free(nat);
     close(fd);
     free(pcm); free(seg); free(dop);
 }
@@ -160,7 +182,7 @@ int main(void) {
     check_file("/tmp/allmeyn-native-tests/t.dff", "DFF");
     char err[128] = "";
     int fd = open(__FILE__, O_RDONLY);
-    assert(dsd_open(fd, 0, err, sizeof err) == NULL);  // not DSD
+    assert(dsd_open(fd, 0, 0, err, sizeof err) == NULL);  // not DSD
     puts("all DSD tests passed");
     return 0;
 }

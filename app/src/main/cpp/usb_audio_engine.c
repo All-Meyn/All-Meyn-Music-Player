@@ -71,6 +71,7 @@ struct Engine {
     // ---- source ----
     Ring ring;
     int in_format, in_channels;  // producer side only
+    atomic_int idle_byte;        // fill for pauses/underruns: 0 for PCM, DSD_IDLE_BYTE for native DSD
     atomic_int source;
     atomic_int playing;
     atomic_uint gen;
@@ -120,7 +121,7 @@ static int fill_packet(Engine *e, uint8_t *buf, uint32_t *ring_frames_out) {
             if (got < frames) atomic_fetch_add(&e->underruns, 1);
         }
     }
-    if (got < frames) memset(buf + got * e->frame_bytes, 0, (size_t) (frames - got) * e->frame_bytes);
+    if (got < frames) memset(buf + got * e->frame_bytes, atomic_load(&e->idle_byte), (size_t) (frames - got) * e->frame_bytes);
     return bytes;
 }
 
@@ -396,6 +397,7 @@ JNI_FN(configure)(JNIEnv *env, jclass clazz, jint alt, jint max_packet, jint sub
         }
         e->in_format = in_format;
         e->in_channels = in_channels;
+        atomic_store(&e->idle_byte, in_format == IN_DSD_NATIVE ? DSD_IDLE_BYTE : 0);
         atomic_store(&e->source, SRC_RING);
         reset_position(e);
         if (rc == 0 && !same) rc = stream_start(e);

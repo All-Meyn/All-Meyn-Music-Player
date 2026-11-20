@@ -6,7 +6,8 @@
 
 int input_sample_bytes(int in_format) {
     switch (in_format) {
-        case IN_S16: return 2;
+        case IN_S16:
+        case IN_DSD_NATIVE: return 2;
         case IN_S24: return 3;
         case IN_S32:
         case IN_FLOAT: return 4;
@@ -91,6 +92,15 @@ size_t ring_write_converted(Ring *r, const uint8_t *in, size_t in_bytes, int in_
     if (frames > space) frames = space;
 
     uint64_t w = atomic_load(&r->write_pos);
+    if (in_format == IN_DSD_NATIVE) {
+        // Raw DSD: one input frame is exactly one output frame (2 x 16-bit per 32-bit slot).
+        if (in_frame != r->frame_bytes || (size_t) out_subslot * (size_t) out_channels != in_frame) return 0;
+        for (uint32_t f = 0; f < frames; f++) {
+            memcpy(r->data + (size_t) ((w + f) % r->capacity_frames) * r->frame_bytes, in + (size_t) f * in_frame, in_frame);
+        }
+        atomic_store(&r->write_pos, w + frames);
+        return (size_t) frames * in_frame;
+    }
     int fast_copy = (in_format == IN_S16 && out_subslot == 2 && in_channels == out_channels);
     for (uint32_t f = 0; f < frames; f++) {
         uint8_t *dst = r->data + (size_t) ((w + f) % r->capacity_frames) * r->frame_bytes;

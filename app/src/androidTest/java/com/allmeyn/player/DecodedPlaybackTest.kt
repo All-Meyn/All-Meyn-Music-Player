@@ -17,6 +17,9 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.allmeyn.player.audio.AllMeynRenderersFactory
 import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.decode.DecodingDataSource
+import com.allmeyn.player.decode.DsdOutput
+import com.allmeyn.player.plugin.AudioCapturePlugin
+import com.allmeyn.player.plugin.PluginHost
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -56,14 +59,49 @@ class DecodedPlaybackTest {
 
     @Test fun wavPack24() = play(asset("clip24.wv"), dop = false, rate = 44_100, encoding = C.ENCODING_PCM_24BIT)
 
-    private fun play(file: File, dop: Boolean, rate: Int, encoding: Int) {
+    /**
+     * Native DSD through Media3: 4-channel 16-bit at DSD rate / 32. Checks every byte Media3 hands
+     * the sink is the file's DSD, untouched (oldest byte first per channel). The Android output
+     * itself is muted by DopGuardOutput.
+     */
+    @Test fun dsfAsNative() {
+        val file = dsdFile("t3.dsf", dff = false)
+        val captured = java.io.ByteArrayOutputStream()
+        var seenFormat: com.allmeyn.player.plugin.PcmFormat? = null
+        val tap = object : AudioCapturePlugin {
+            override val name = "test tap"
+            override fun onConfigure(format: com.allmeyn.player.plugin.PcmFormat) { seenFormat = format }
+            override fun onBuffer(buffer: ByteBuffer, presentationTimeUs: Long) {
+                if (captured.size() < 8 * 20_000) {
+                    val b = ByteArray(buffer.remaining()); buffer.get(b); captured.write(b)
+                }
+            }
+        }
+        PluginHost.register(tap)
+        try {
+            play(file, dop = true, rate = 88_200, encoding = C.ENCODING_PCM_16BIT, nativeMaxRate = 24_576_000, channels = 4)
+        } finally {
+            PluginHost.unregister(tap)
+        }
+        assertTrue("plugin format: $seenFormat", seenFormat?.isNativeDsd == true)
+        val got = captured.toByteArray()
+        assertTrue("captured ${got.size} bytes", got.size >= 8 * 10_000)
+        val bits = lastBits!!
+        for (f in 0 until 10_000) for (c in 0..1) for (k in 0..3) {
+            assertEquals("frame $f ch $c byte $k", bits[c][4 * f + k], got[8 * f + 4 * c + k])
+        }
+    }
+
+    private fun play(file: File, dop: Boolean, rate: Int, encoding: Int, nativeMaxRate: Int = 0, channels: Int = 2) {
         lateinit var player: ExoPlayer
         val ready = CountDownLatch(1)
         var error: PlaybackException? = null
         sync {
             player = ExoPlayer.Builder(context, AllMeynRenderersFactory(context, app.usbDac, app.usbDriver))
                 .setMediaSourceFactory(
-                    DefaultMediaSourceFactory(DecodingDataSource.Factory(context, DefaultDataSource.Factory(context)) { dop }),
+                    DefaultMediaSourceFactory(
+                        DecodingDataSource.Factory(context, DefaultDataSource.Factory(context)) { DsdOutput(dop, nativeMaxRate) },
+                    ),
                 )
                 .build()
             player.addListener(object : Player.Listener {
@@ -86,7 +124,9 @@ class DecodedPlaybackTest {
             sync { format = player.audioFormat }
             assertEquals("${file.name} sample rate", rate, format?.sampleRate)
             assertEquals("${file.name} encoding", encoding, format?.pcmEncoding)
-            assertEquals(dop, DecodeRegistry.dopActive)
+            assertEquals("${file.name} channels", channels, format?.channelCount)
+            assertEquals(dop && nativeMaxRate == 0, DecodeRegistry.dopActive)
+            assertEquals(nativeMaxRate > 0, DecodeRegistry.nativeActive)
 
             sync { player.play() }
             Thread.sleep(1200)
@@ -121,6 +161,9 @@ class DecodedPlaybackTest {
         return out
     }
 
+    /** The DSD bits (MSB = oldest) of the last [dsdFile], per channel. */
+    private var lastBits: Array<ByteArray>? = null
+
     /** 3 s of DSD64 stereo (1 kHz / 3 kHz sines through a 2nd-order sigma-delta modulator). */
     private fun dsdFile(name: String, dff: Boolean): File {
         val rate = 2_822_400
@@ -136,6 +179,7 @@ class DecodedPlaybackTest {
                 if (y > 0) bits[c][n / 8] = (bits[c][n / 8].toInt() or (0x80 ushr (n % 8))).toByte()
             }
         }
+        lastBits = bits
         val out = File(context.cacheDir, name)
         FileOutputStream(out).use { os ->
             if (dff) {

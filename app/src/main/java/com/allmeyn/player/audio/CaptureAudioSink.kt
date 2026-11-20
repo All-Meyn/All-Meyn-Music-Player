@@ -43,6 +43,7 @@ class CaptureAudioSink(
                 channelCount = inputFormat.channelCount,
                 bytesPerFrame = Util.getPcmFrameSize(inputFormat.pcmEncoding, inputFormat.channelCount),
                 isDop = DecodeRegistry.dopActive && inputFormat.pcmEncoding == C.ENCODING_PCM_24BIT,
+                isNativeDsd = DecodeRegistry.isNativeDsd(inputFormat.pcmEncoding, inputFormat.channelCount, inputFormat.sampleRate),
             )
             // Must happen before the AudioTrack is created inside super.configure()/handleBuffer()
             // so a USB DAC can be switched to the matching bit-perfect mode first.

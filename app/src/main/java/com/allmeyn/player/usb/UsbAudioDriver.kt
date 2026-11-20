@@ -16,6 +16,7 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import androidx.core.content.IntentCompat
 import androidx.media3.common.C
+import com.allmeyn.player.decode.DecodeRegistry
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,12 +39,14 @@ import java.util.concurrent.atomic.AtomicInteger
  */
 class UsbAudioDriver(private val context: Context) {
 
-    enum class Reason { ENABLED, DISABLED, DISCONNECTED, FAILED }
+    enum class Reason { ENABLED, DISABLED, DISCONNECTED, FAILED, DSD_MODE_CHANGED }
 
     /** DAC hardware volume, in steps 0..[maxStep] (see [VolumeScale]). */
     data class VolumeState(val step: Int, val maxStep: Int, val db: Float, val muted: Boolean, val hasMute: Boolean)
 
     data class State(
+        val nativeDsd: Boolean = true,
+        val autoForDsd: Boolean = true,
         val active: Boolean = false,
         val busy: Boolean = false,
         val deviceName: String? = null,
@@ -65,7 +68,9 @@ class UsbAudioDriver(private val context: Context) {
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "usb-driver") }
     private val listeners = CopyOnWriteArrayList<Listener>()
 
-    private val _state = MutableStateFlow(State())
+    private val _state = MutableStateFlow(
+        State(nativeDsd = prefs.getBoolean(KEY_NATIVE_DSD, true), autoForDsd = prefs.getBoolean(KEY_AUTO_FOR_DSD, true)),
+    )
     val state: StateFlow<State> = _state.asStateFlow()
 
     // Worker thread only.
@@ -89,6 +94,58 @@ class UsbAudioDriver(private val context: Context) {
             return isActive && d.playbackAlts.any { !it.isPcm } &&
                 d.playbackAlts.any { it.isPcm && it.bitResolution >= 24 }
         }
+
+    /**
+     * The DAC's native DSD mode: a UAC2 raw-data alt setting, stereo, 32-bit slots (on FiiO and
+     * other XMOS-style DACs this is Linux's DSD_U32_BE: 32 DSD bits per channel per frame,
+     * oldest byte first, clock at DSD rate / 32).
+     */
+    private fun nativeDsdAlt(d: UacDescriptorParser.Result) = d.playbackAlts.firstOrNull {
+        it.isRawData && !it.isPcm && it.channels == 2 && it.subslotBytes == 4 && it.dataEndpoint != null
+    }
+
+    /** Send DSD as native DSD (instead of DoP) when the DAC has a native mode. User setting, on by default. */
+    var nativeDsdEnabled: Boolean
+        get() = prefs.getBoolean(KEY_NATIVE_DSD, true)
+        set(value) {
+            if (value == nativeDsdEnabled) return
+            prefs.edit().putBoolean(KEY_NATIVE_DSD, value).apply()
+            _state.value = _state.value.copy(nativeDsd = value)
+            // Lets the player re-open a playing DSD file in the new mode.
+            main.post { listeners.forEach { it.onDriverStateChanged(isActive, Reason.DSD_MODE_CHANGED) } }
+        }
+
+    /**
+     * Highest DSD rate (Hz) the DAC's native mode can carry right now, 0 if none or turned off.
+     * Limited by the endpoint's packet size (high speed: 8000 packets/s at bInterval 1, one extra
+     * frame per packet kept free for clock drift) and capped at DSD512.
+     */
+    val nativeDsdMaxRate: Int
+        get() {
+            val d = descriptor ?: return 0
+            if (!isActive || !nativeDsdEnabled) return 0
+            val alt = nativeDsdAlt(d) ?: return 0
+            val ep = alt.dataEndpoint!!
+            val framesPerPacket = ep.maxPacketSize / (alt.subslotBytes * alt.channels) - 1
+            val packetsPerSec = 8000 shr (ep.interval - 1).coerceIn(0, 3)
+            val maxFrameRate = framesPerPacket.toLong() * packetsPerSec
+            return (maxFrameRate * 32).coerceAtMost(MAX_NATIVE_DSD_RATE.toLong()).toInt()
+        }
+
+    /** Turn the driver on by itself when a DSD song starts (DSD needs it). User setting, on by default. */
+    var autoEnableForDsd: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_FOR_DSD, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_AUTO_FOR_DSD, value).apply()
+            _state.value = _state.value.copy(autoForDsd = value)
+        }
+
+    /** The driver is off, a DAC is attached and we already have permission: [enable] won't prompt. */
+    fun canEnableWithoutPrompt(): Boolean {
+        if (isActive || _state.value.busy) return false
+        val device = findAudioDevice() ?: return false
+        return usbManager.hasPermission(device)
+    }
 
     /** Whether the user wants the driver on whenever the DAC is connected. */
     var enabledByUser: Boolean
@@ -178,7 +235,7 @@ class UsbAudioDriver(private val context: Context) {
             closeSession()
             val msg = "Driver off · DAC handed back to Android"
             main.post {
-                _state.value = State(message = msg)
+                _state.value = State(nativeDsd = nativeDsdEnabled, autoForDsd = autoEnableForDsd, message = msg)
                 listeners.forEach { it.onVolumeChanged(null) }
                 listeners.forEach { it.onDriverStateChanged(false, Reason.DISABLED) }
                 onResult(msg)
@@ -191,7 +248,7 @@ class UsbAudioDriver(private val context: Context) {
         if (descriptor == null) return
         closeSession()
         main.post {
-            _state.value = State(message = "DAC disconnected · playback paused")
+            _state.value = State(nativeDsd = nativeDsdEnabled, autoForDsd = autoEnableForDsd, message = "DAC disconnected · playback paused")
             listeners.forEach { it.onVolumeChanged(null) }
             listeners.forEach { it.onDriverStateChanged(false, Reason.DISCONNECTED) }
         }
@@ -318,6 +375,21 @@ class UsbAudioDriver(private val context: Context) {
      */
     fun configureStream(pcmEncoding: Int, sampleRate: Int, channels: Int): StreamResult {
         val desc = descriptor ?: return StreamResult(null, "driver off")
+        if (DecodeRegistry.isNativeDsd(pcmEncoding, channels, sampleRate)) {
+            // Raw DSD: the DAC's native DSD mode, clock at DSD rate / 32, bytes copied as they are.
+            val alt = nativeDsdAlt(desc) ?: return StreamResult(null, "no native DSD mode")
+            val r = NativeUsb.configure(
+                alt = alt.altSetting,
+                maxPacket = alt.dataEndpoint!!.maxPacketSize,
+                subslotBytes = alt.subslotBytes,
+                outChannels = alt.channels,
+                rate = sampleRate,
+                inFormat = NativeUsb.IN_DSD_NATIVE,
+                inChannels = channels,
+                ringMs = RING_MS,
+            )
+            return if (r.startsWith("OK")) StreamResult(streamToken.incrementAndGet(), null) else StreamResult(null, r)
+        }
         val inFormat = inFormatFor(pcmEncoding) ?: return StreamResult(null, "encoding $pcmEncoding")
         val pcm = desc.playbackAlts.filter { it.isPcm && it.dataEndpoint != null && it.channels >= 2 }
         val alt = (if (pcmEncoding == C.ENCODING_PCM_16BIT) pcm.firstOrNull { it.bitResolution == 16 } else null)
@@ -336,7 +408,13 @@ class UsbAudioDriver(private val context: Context) {
         return if (r.startsWith("OK")) StreamResult(streamToken.incrementAndGet(), null) else StreamResult(null, r)
     }
 
-    fun supportsPcm(pcmEncoding: Int, channels: Int) = inFormatFor(pcmEncoding) != null && channels in 1..2
+    /** Whether the driver can take this Media3 PCM stream (normal PCM, or our native DSD). */
+    fun supportsFormat(pcmEncoding: Int, channels: Int, sampleRate: Int): Boolean {
+        if (DecodeRegistry.isNativeDsd(pcmEncoding, channels, sampleRate)) {
+            return descriptor?.let { nativeDsdAlt(it) } != null
+        }
+        return inFormatFor(pcmEncoding) != null && channels in 1..2
+    }
 
     private fun inFormatFor(pcmEncoding: Int): Int? = when (pcmEncoding) {
         C.ENCODING_PCM_16BIT -> NativeUsb.IN_S16
@@ -427,6 +505,11 @@ class UsbAudioDriver(private val context: Context) {
         private const val KEY_ENABLED = "enabled"
         private const val KEY_VOLUME_RAW = "dac_volume_raw" // 1/256 dB
         private const val KEY_VOLUME_MUTED = "dac_volume_muted"
+        private const val KEY_NATIVE_DSD = "native_dsd"
+        private const val KEY_AUTO_FOR_DSD = "auto_for_dsd"
+
+        /** DSD512 (48 kHz family). */
+        private const val MAX_NATIVE_DSD_RATE = 24_576_000
 
         /** Wait this long after a DAC is plugged in before taking it from Android. */
         const val ATTACH_SETTLE_MS = 1500L

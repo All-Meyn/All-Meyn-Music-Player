@@ -24,16 +24,17 @@ object NativeDecoder {
     const val OPEN_ERROR = -1L
 
     /**
-     * Opens [fd] (duplicated natively, so the caller may close it). [dop]: output DSD as DoP.
+     * Opens [fd] (duplicated natively, so the caller may close it). DSD goes out as native DSD
+     * when its rate is at most [nativeMaxDsdRate] (0 = never), else as DoP if [dop], else as PCM.
      * Returns a handle, [NOT_OURS] (0) if the file isn't a format we decode, or [OPEN_ERROR] (-1)
      * on error ([lastError]). A handle is a native pointer and may be NEGATIVE: arm64 Android tags
      * the top byte of heap pointers. Never test it with `< 0` / `> 0`.
      */
-    @JvmStatic external fun open(fd: Int, dop: Boolean): Long
+    @JvmStatic external fun open(fd: Int, dop: Boolean, nativeMaxDsdRate: Int): Long
 
     @JvmStatic external fun lastError(): String
 
-    /** [sampleRate, channels, format, totalFrames, isDsd, isDop] */
+    /** [sampleRate, channels, format, totalFrames, isDsd, isDop, isNative] */
     @JvmStatic external fun info(handle: Long): LongArray
 
     @JvmStatic external fun describe(handle: Long): String
