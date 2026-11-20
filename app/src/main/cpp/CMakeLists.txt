@@ -24,5 +24,5 @@ target_compile_options(usb1.0 PRIVATE -fvisibility=hidden -pthread)
 target_link_libraries(usb1.0 PRIVATE log)
 
 # ---- JNI bridge -------------------------------------------------------------------------------
-add_library(allmeyn_usb SHARED usb_audio_jni.c)
-target_link_libraries(allmeyn_usb PRIVATE usb1.0 log)
+add_library(allmeyn_usb SHARED usb_audio_jni.c usb_audio_engine.c)
+target_link_libraries(allmeyn_usb PRIVATE usb1.0 log m)

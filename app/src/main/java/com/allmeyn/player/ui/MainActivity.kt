@@ -28,7 +28,6 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.font.FontFamily
-import com.allmeyn.player.usb.UsbAudioProbe
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
@@ -165,8 +164,24 @@ private fun PlayerScreen(
         onDispose { c?.removeListener(listener) }
     }
 
-    val usbProbe = remember { UsbAudioProbe(context.applicationContext) }
+    val usbProbe = app.usbDriver
     var probeText by remember { mutableStateOf("") }
+    var driverStatus by remember { mutableStateOf("") }
+    var driverRunning by remember { mutableStateOf(false) }
+    LaunchedEffect(driverRunning) {
+        while (driverRunning) {
+            usbProbe.status { driverStatus = it }
+            delay(500)
+        }
+    }
+    fun startTone(rate: Int, bits: Int) {
+        controller?.pause() // Android loses the DAC while our driver owns it
+        probeText = "Starting $rate Hz / $bits-bit…"
+        usbProbe.startTone(rate, bits) {
+            probeText = it
+            driverRunning = it.startsWith("Streaming")
+        }
+    }
 
     var peak by remember { mutableFloatStateOf(0f) }
     var formatLabel by remember { mutableStateOf("—") }
@@ -214,6 +229,21 @@ private fun PlayerScreen(
                             probeText = "Probing…"
                             usbProbe.probe { probeText = it }
                         }) { Text("Probe DAC") }
+                    }
+                    Text(
+                        "Test tone: 440 Hz at −24 dBFS. Android's volume doesn't apply — turn the KA17 down first.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(onClick = { startTone(44100, 16) }) { Text("44.1k/16") }
+                        OutlinedButton(onClick = { startTone(96000, 32) }) { Text("96k/32") }
+                        Button(onClick = {
+                            driverRunning = false
+                            usbProbe.stop { driverStatus = it }
+                        }) { Text("Stop") }
+                    }
+                    if (driverStatus.isNotEmpty()) {
+                        Text(driverStatus, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                     }
                     if (probeText.isNotEmpty()) {
                         // Own scroll area so a long report doesn't push the playlist off screen.
