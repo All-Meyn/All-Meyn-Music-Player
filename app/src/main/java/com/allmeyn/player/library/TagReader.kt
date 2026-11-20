@@ -63,7 +63,7 @@ object TagReader {
 
     private fun nativeInfo(pfd: ParcelFileDescriptor, t: Tags) {
         // dop=true: cheapest open for DSD (no filter tables); format is only used for the label.
-        val h = NativeDecoder.open(pfd.fd, true)
+        val h = NativeDecoder.open(pfd.fd, true, 0)
         if (h == NativeDecoder.NOT_OURS || h == NativeDecoder.OPEN_ERROR) return
         try {
             val info = NativeDecoder.info(h)
