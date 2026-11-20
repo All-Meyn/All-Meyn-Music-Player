@@ -57,8 +57,10 @@ jobs:
           for abi in arm64-v8a armeabi-v7a x86_64; do
             SO="$(mktemp)"
             unzip -p "$APK" "lib/$abi/liballmeyn_usb.so" > "$SO"
-            for sym in ff_ape_decoder ff_wavpack_decoder ff_ape_demuxer ff_wv_demuxer; do
-              grep -qa "$sym" "$SO" || strings "$SO" | grep -qi "${sym#ff_}" || { echo "$abi: $sym missing"; exit 1; }
+            # Symbols are stripped; FFmpeg's codec names survive as strings.
+            if grep -qa "FFmpeg missing" "$SO"; then echo "$abi: built without FFmpeg"; exit 1; fi
+            for name in "Monkey's Audio" "WavPack"; do
+              grep -qa "$name" "$SO" || { echo "$abi: '$name' codec not found"; exit 1; }
             done
             echo "$abi: APE + WavPack decoders linked ($(stat -c %s "$SO") bytes)"
           done
