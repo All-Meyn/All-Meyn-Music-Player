@@ -362,7 +362,10 @@ Decoder *dsd_open(int fd, int dop, uint32_t native_max_rate, char *err, int err_
         in->is_dop = 1;
         in->format = DEC_S24;
         in->sample_rate = (int) (d->dsd_rate / 16);
-        in->total_frames = d->bytes_per_ch / 2;
+        // Even frame count (last frame padded with DSD idle): every track then starts with marker
+        // 0x05 right after one that ended with 0xFA, so gapless DoP never repeats a marker (a
+        // repeat can make the DAC drop out of DSD mode for a moment: a click between tracks).
+        in->total_frames = ((d->bytes_per_ch + 1) / 2 + 1) & ~(int64_t) 1;
         d->base.read = dop_read;
         snprintf(in->desc, sizeof in->desc, "%s DSD%d → DoP %.1f kHz (native DSD on the DAC)",
                  d->is_dff ? "DFF" : "DSF", 64 * multiple, in->sample_rate / 1000.0);
