@@ -19,9 +19,16 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.text.font.FontFamily
+import com.allmeyn.player.usb.UsbAudioProbe
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
@@ -158,6 +165,9 @@ private fun PlayerScreen(
         onDispose { c?.removeListener(listener) }
     }
 
+    val usbProbe = remember { UsbAudioProbe(context.applicationContext) }
+    var probeText by remember { mutableStateOf("") }
+
     var peak by remember { mutableFloatStateOf(0f) }
     var formatLabel by remember { mutableStateOf("—") }
     LaunchedEffect(Unit) {
@@ -193,6 +203,24 @@ private fun PlayerScreen(
                 Column(Modifier.padding(12.dp)) {
                     Text(dac.deviceName ?: "Phone output", fontWeight = FontWeight.SemiBold)
                     Text(dac.detail, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("USB driver · probe", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        OutlinedButton(onClick = {
+                            probeText = "Probing…"
+                            usbProbe.probe { probeText = it }
+                        }) { Text("Probe DAC") }
+                    }
+                    if (probeText.isNotEmpty()) {
+                        // Own scroll area so a long report doesn't push the playlist off screen.
+                        SelectionContainer(Modifier.heightIn(max = 240.dp).verticalScroll(rememberScrollState())) {
+                            Text(probeText, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                        }
+                    }
                 }
             }
 
