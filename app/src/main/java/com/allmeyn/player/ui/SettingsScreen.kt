@@ -36,6 +36,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.util.UnstableApi
 import com.allmeyn.player.BuildConfig
 import com.allmeyn.player.library.MusicLibrary
 import com.allmeyn.player.usb.DacStatus
@@ -43,6 +44,7 @@ import com.allmeyn.player.usb.UsbAudioDriver
 import kotlin.math.roundToInt
 
 /** Music folders, the USB driver and its diagnostics, and the plugin tap. */
+@UnstableApi
 @Composable
 fun SettingsScreen(
     library: MusicLibrary.State,
