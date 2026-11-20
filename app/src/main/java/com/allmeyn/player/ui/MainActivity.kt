@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -34,6 +35,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
@@ -61,6 +63,7 @@ import com.allmeyn.player.AllMeynApp
 import com.allmeyn.player.playback.PlaybackService
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 @UnstableApi
 class MainActivity : ComponentActivity() {
@@ -78,11 +81,18 @@ class MainActivity : ComponentActivity() {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
         val app = application as AllMeynApp
+        // Launched by plugging in the DAC ("Always open All-Meyn"): permission is granted now.
+        app.usbDriver.maybeAutoEnable()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 PlayerScreen(controller, app, ::titleFor, ::enqueue)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        (application as AllMeynApp).usbDriver.maybeAutoEnable()
     }
 
     override fun onStart() {
@@ -166,41 +176,28 @@ private fun PlayerScreen(
     }
 
     val usbDriver = app.usbDriver
+    val driver by usbDriver.state.collectAsStateWithLifecycle()
     var probeText by remember { mutableStateOf("") }
-    var driverMsg by remember { mutableStateOf("") }
     var driverStatus by remember { mutableStateOf("") }
-    var driverOn by remember { mutableStateOf(usbDriver.isActive) }
-    LaunchedEffect(driverOn) {
-        while (driverOn) {
+    LaunchedEffect(driver.active) {
+        if (!driver.active) driverStatus = ""
+        while (driver.active) {
             usbDriver.status { driverStatus = it }
             delay(500)
         }
     }
-    var driverBusy by remember { mutableStateOf(false) }
     fun setDriver(on: Boolean) {
         val c = controller
         val wasPlaying = c?.isPlaying == true
-        c?.pause()
-        driverBusy = true
-        driverMsg = if (on) "Taking over the DAC…" else "Handing the DAC back…"
-        val done: (String) -> Unit = { msg ->
-            driverBusy = false
-            driverMsg = msg
-            driverOn = usbDriver.isActive
-            if (!driverOn) driverStatus = ""
-            // Seeking rebuilds Media3's audio output, which picks the new route.
-            c?.let {
-                it.seekTo(it.currentPosition)
-                if (wasPlaying) it.play()
-            }
-        }
+        c?.pause() // PlaybackService rebuilds the audio output once the route has changed
+        val done: (String) -> Unit = { if (wasPlaying) c?.play() }
         if (on) usbDriver.enable(done) else usbDriver.disable(done)
     }
     var toneActive by remember { mutableStateOf(false) }
     fun startTone(rate: Int, bits: Int) {
         controller?.pause()
         toneActive = true
-        usbDriver.startTone(rate, bits) { driverMsg = it }
+        usbDriver.startTone(rate, bits) { probeText = it }
     }
 
     var peak by remember { mutableFloatStateOf(0f) }
@@ -236,8 +233,16 @@ private fun PlayerScreen(
 
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
-                    Text(dac.deviceName ?: "Phone output", fontWeight = FontWeight.SemiBold)
-                    Text(dac.detail, style = MaterialTheme.typography.bodySmall)
+                    if (driver.active) {
+                        Text(driver.deviceName ?: "USB DAC", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "All-Meyn USB driver · bit-perfect · " + driverStatus.substringBefore('\n'),
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    } else {
+                        Text(dac.deviceName ?: "Phone output", fontWeight = FontWeight.SemiBold)
+                        Text(dac.detail, style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
 
@@ -254,17 +259,38 @@ private fun PlayerScreen(
                         Column(Modifier.weight(1f)) {
                             Text("Bit-perfect USB driver", fontWeight = FontWeight.Medium)
                             Text(
-                                "Bypasses Android's mixer. Android volume doesn't apply — use the DAC's volume.",
+                                "Bypasses Android's mixer. Stays on and comes back when the DAC is plugged in.",
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
-                        Switch(checked = driverOn, enabled = !driverBusy, onCheckedChange = { setDriver(it) })
+                        Switch(checked = driver.active, enabled = !driver.busy, onCheckedChange = { setDriver(it) })
                     }
-                    if (driverMsg.isNotEmpty()) Text(driverMsg, style = MaterialTheme.typography.bodySmall)
+                    if (driver.message.isNotEmpty()) Text(driver.message, style = MaterialTheme.typography.bodySmall)
+                    driver.volume?.let { v ->
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                if (v.muted || v.step == 0) "DAC volume · muted" else "DAC volume · %.1f dB".format(v.db),
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.width(140.dp),
+                            )
+                            // Commit on release: each change is a USB control request.
+                            var dragging by remember { mutableStateOf<Float?>(null) }
+                            Slider(
+                                value = dragging ?: v.step.toFloat(),
+                                onValueChange = { dragging = it },
+                                onValueChangeFinished = {
+                                    dragging?.let { usbDriver.setVolumeStep(it.roundToInt()) }
+                                    dragging = null
+                                },
+                                valueRange = 0f..v.maxStep.toFloat(),
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                    }
                     if (driverStatus.isNotEmpty()) {
                         Text(driverStatus, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                     }
-                    if (driverOn) {
+                    if (driver.active) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                             Text("Test tone", style = MaterialTheme.typography.bodySmall)
                             OutlinedButton(onClick = { startTone(44100, 16) }) { Text("44.1k/16") }

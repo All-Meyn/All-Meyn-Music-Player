@@ -31,15 +31,16 @@ class UsbAudioOutputProvider(
     private val fallback = AudioTrackAudioOutputProvider.Builder(context).build()
     /** Each listener with the looper it registered on (DefaultAudioSink expects the playback thread). */
     private val listeners = CopyOnWriteArrayList<Pair<AudioOutputProvider.Listener, Handler>>()
-    private val main = Handler(Looper.getMainLooper())
 
-    private val modeListener = UsbAudioDriver.ModeListener {
-        // Lets DefaultAudioSink re-query format support after the driver turns on/off.
-        listeners.forEach { (l, handler) -> handler.post { l.onFormatSupportChanged() } }
+    private val driverListener = object : UsbAudioDriver.Listener {
+        override fun onDriverStateChanged(active: Boolean, reason: UsbAudioDriver.Reason) {
+            // Lets DefaultAudioSink re-query format support after the driver turns on/off.
+            listeners.forEach { (l, handler) -> handler.post { l.onFormatSupportChanged() } }
+        }
     }
 
     init {
-        main.post { driver.addModeListener(modeListener) }
+        driver.addListener(driverListener)
     }
 
     private fun usable(formatConfig: FormatConfig): Boolean {
@@ -97,7 +98,7 @@ class UsbAudioOutputProvider(
     override fun setClock(clock: Clock) = fallback.setClock(clock)
 
     override fun release() {
-        main.post { driver.removeModeListener(modeListener) }
+        driver.removeListener(driverListener)
         fallback.release()
     }
 

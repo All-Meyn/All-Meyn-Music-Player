@@ -37,12 +37,51 @@ object UacDescriptorParser {
 
     data class ClockSource(val id: Int, val attributes: Int)
 
+    /** UAC2 Feature Unit: [controls] holds bmaControls per channel (index 0 = master). */
+    data class FeatureUnit(val id: Int, val sourceId: Int, val controls: List<Long>) {
+        /** Bits 0-1 = mute, 2-3 = volume; 0b11 means the host can set it. */
+        fun canSetMute(channel: Int) = controls.getOrNull(channel)?.let { it and 0x3L == 0x3L } ?: false
+        fun canSetVolume(channel: Int) = controls.getOrNull(channel)?.let { (it shr 2) and 0x3L == 0x3L } ?: false
+    }
+
+    /** Which feature unit and channels to drive for DAC hardware volume. */
+    data class VolumeTarget(val unitId: Int, val channels: List<Int>, val muteChannels: List<Int>)
+
     data class Result(
         val uacVersion: Int,
         val controlInterface: Int,
         val clockSources: List<ClockSource>,
         val playbackAlts: List<StreamingAlt>,
-    )
+        val featureUnits: List<FeatureUnit> = emptyList(),
+    ) {
+        /**
+         * The volume control on the playback path: a feature unit fed (directly or through other
+         * feature units) by the USB streaming terminal our playback alts link to. Prefers master
+         * volume; otherwise every channel that has one.
+         */
+        fun playbackVolume(): VolumeTarget? {
+            val streamingTerminals = playbackAlts.map { it.terminalLink }.toSet()
+            val byId = featureUnits.associateBy { it.id }
+            fun onPlaybackPath(fu: FeatureUnit): Boolean {
+                var src = fu.sourceId
+                repeat(8) {
+                    if (src in streamingTerminals) return true
+                    src = byId[src]?.sourceId ?: return false
+                }
+                return false
+            }
+            val candidates = featureUnits.filter(::onPlaybackPath).ifEmpty { featureUnits }
+            for (fu in candidates) {
+                val vol = if (fu.canSetVolume(0)) listOf(0)
+                else (1 until fu.controls.size).filter { fu.canSetVolume(it) }
+                if (vol.isEmpty()) continue
+                val mute = if (fu.canSetMute(0)) listOf(0)
+                else (1 until fu.controls.size).filter { fu.canSetMute(it) }
+                return VolumeTarget(fu.id, vol, mute)
+            }
+            return null
+        }
+    }
 
     private const val DESC_CONFIG = 0x02
     private const val DESC_INTERFACE = 0x04
@@ -58,6 +97,7 @@ object UacDescriptorParser {
         var controlInterface = -1
         val clocks = mutableListOf<ClockSource>()
         val alts = mutableListOf<StreamingAlt>()
+        val featureUnits = mutableListOf<FeatureUnit>()
 
         var inControl = false
         var currentAlt: StreamingAlt? = null
@@ -95,6 +135,14 @@ object UacDescriptorParser {
                     val a = currentAlt
                     if (inControl && uacVersion == 2 && subtype == 0x0A && len >= 5) {
                         clocks += ClockSource(id = raw.u8(i + 3), attributes = raw.u8(i + 4))
+                    } else if (inControl && uacVersion == 2 && subtype == 0x06 && len >= 10) {
+                        // FEATURE_UNIT: bUnitID, bSourceID, bmaControls[ch] (4 bytes each), iFeature
+                        val count = (len - 6) / 4
+                        featureUnits += FeatureUnit(
+                            id = raw.u8(i + 3),
+                            sourceId = raw.u8(i + 4),
+                            controls = (0 until count).map { raw.u32(i + 5 + it * 4) },
+                        )
                     } else if (a != null) {
                         parseStreamingCs(raw, i, len, subtype, a)
                     }
@@ -117,7 +165,7 @@ object UacDescriptorParser {
 
         // Playback alts are the ones whose data endpoint is OUT (host -> DAC).
         val playback = alts.filter { a -> a.endpoints.any { it.isOut && !it.isFeedback } }
-        return Result(uacVersion, controlInterface, clocks, playback)
+        return Result(uacVersion, controlInterface, clocks, playback, featureUnits)
     }
 
     private fun parseStreamingCs(raw: ByteArray, i: Int, len: Int, subtype: Int, a: StreamingAlt) {
@@ -155,6 +203,11 @@ object UacDescriptorParser {
         if (r.clockSources.isNotEmpty()) {
             appendLine("Clock sources: " + r.clockSources.joinToString { "#${it.id}" })
         }
+        val vol = r.playbackVolume()
+        appendLine(
+            if (vol == null) "Hardware volume: none (use the DAC's own buttons)"
+            else "Hardware volume: unit #${vol.unitId} · channels ${vol.channels} · mute ${vol.muteChannels.ifEmpty { "none" }}",
+        )
         if (r.playbackAlts.isEmpty()) appendLine("No playback streaming interfaces found")
         for (a in r.playbackAlts) {
             val data = a.endpoints.firstOrNull { it.isOut && !it.isFeedback }

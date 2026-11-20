@@ -12,8 +12,13 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.core.content.ContextCompat
+import androidx.core.content.IntentCompat
 import androidx.media3.common.C
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
@@ -22,26 +27,51 @@ import java.util.concurrent.atomic.AtomicInteger
  * The custom USB audio driver (bypasses Android's mixer for true bit-perfect output).
  *
  * - [enable]/[disable]: open/close a session. While enabled the DAC belongs to this app and
- *   Android can't use it; [UsbAudioOutputProvider] then routes Media3's audio here.
+ *   Android can't use it; [UsbAudioOutputProvider] then routes Media3's audio here. The choice is
+ *   remembered, and the driver turns itself back on when the DAC is plugged in again.
+ * - Unplugging the DAC closes the session and tells listeners ([Reason.DISCONNECTED]).
+ * - DAC hardware volume through the UAC2 feature unit: [setVolumeStep], [adjustVolume], [setMuted].
  * - [configureStream]: called by [UsbAudioOutput] on the playback thread for each new output.
  * - [probe], [startTone]: diagnostics.
  *
- * Session open/close runs on one worker thread; results are posted to the main thread.
+ * Session work runs on one worker thread; listeners and [state] update on the main thread.
  */
 class UsbAudioDriver(private val context: Context) {
 
-    /** Called on the main thread when the driver turns on (before the DAC is taken) or off. */
-    fun interface ModeListener {
-        fun onDriverModeChanged(active: Boolean)
+    enum class Reason { ENABLED, DISABLED, DISCONNECTED, FAILED }
+
+    /** DAC hardware volume, in steps 0..[maxStep] (see [VolumeScale]). */
+    data class VolumeState(val step: Int, val maxStep: Int, val db: Float, val muted: Boolean, val hasMute: Boolean)
+
+    data class State(
+        val active: Boolean = false,
+        val busy: Boolean = false,
+        val deviceName: String? = null,
+        val message: String = "",
+        val volume: VolumeState? = null,
+    )
+
+    /** Main-thread callbacks. */
+    interface Listener {
+        /** Right before the DAC is taken from Android (so "audio becoming noisy" can be ignored). */
+        fun beforeTakeover() {}
+        fun onDriverStateChanged(active: Boolean, reason: Reason) {}
+        fun onVolumeChanged(volume: VolumeState?) {}
     }
 
     private val usbManager = context.getSystemService(UsbManager::class.java)
+    private val prefs = context.getSharedPreferences("usb_driver", Context.MODE_PRIVATE)
     private val main = Handler(Looper.getMainLooper())
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "usb-driver") }
-    private val modeListeners = CopyOnWriteArrayList<ModeListener>()
+    private val listeners = CopyOnWriteArrayList<Listener>()
+
+    private val _state = MutableStateFlow(State())
+    val state: StateFlow<State> = _state.asStateFlow()
 
     // Worker thread only.
     private var connection: UsbDeviceConnection? = null
+    private var sessionDeviceName: String? = null
+    private var volume: UsbDacVolume? = null
 
     @Volatile private var descriptor: UacDescriptorParser.Result? = null
 
@@ -49,13 +79,44 @@ class UsbAudioDriver(private val context: Context) {
     val isActive: Boolean
         get() = descriptor != null && NativeUsb.isAlive()
 
+    /** Whether the user wants the driver on whenever the DAC is connected. */
+    var enabledByUser: Boolean
+        get() = prefs.getBoolean(KEY_ENABLED, false)
+        private set(value) = prefs.edit().putBoolean(KEY_ENABLED, value).apply()
+
     /** Bumped whenever the native stream is reconfigured; outputs holding an old token are stale. */
     private val streamToken = AtomicInteger(0)
 
     fun currentToken(): Int = streamToken.get()
 
-    fun addModeListener(l: ModeListener) = modeListeners.add(l)
-    fun removeModeListener(l: ModeListener) = modeListeners.remove(l)
+    fun addListener(l: Listener) = listeners.add(l)
+    fun removeListener(l: Listener) = listeners.remove(l)
+
+    private val usbReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context, intent: Intent) {
+            val device = IntentCompat.getParcelableExtra(intent, UsbManager.EXTRA_DEVICE, UsbDevice::class.java)
+            when (intent.action) {
+                UsbManager.ACTION_USB_DEVICE_DETACHED -> worker.execute {
+                    if (device != null && device.deviceName == sessionDeviceName) onDisconnected()
+                }
+                // Permission may only be granted once the "open with" dialog is answered: retry.
+                UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
+                    main.postDelayed({ maybeAutoEnable() }, 800)
+                    main.postDelayed({ maybeAutoEnable() }, 3000)
+                }
+            }
+        }
+    }
+
+    init {
+        val filter = IntentFilter().apply {
+            addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+            addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+        }
+        // System broadcasts still reach a non-exported receiver.
+        ContextCompat.registerReceiver(context, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        main.post { maybeAutoEnable() }
+    }
 
     fun findAudioDevice(): UsbDevice? = usbManager.deviceList.values.firstOrNull { d ->
         (0 until d.interfaceCount).any { d.getInterface(it).interfaceClass == UsbConstants.USB_CLASS_AUDIO }
@@ -63,24 +124,58 @@ class UsbAudioDriver(private val context: Context) {
 
     // ---- session ------------------------------------------------------------------------------
 
+    /**
+     * Turns the driver on if the user left it on, the DAC is attached and we already have USB
+     * permission (never prompts). Safe to call any time on the main thread.
+     */
+    fun maybeAutoEnable() {
+        if (!enabledByUser || isActive || _state.value.busy) return
+        val device = findAudioDevice() ?: return
+        if (!usbManager.hasPermission(device)) return
+        enable { Log.i(TAG, "Auto-enable: $it") }
+    }
+
     /** Takes the DAC from Android. Call on the main thread. */
     fun enable(onResult: (String) -> Unit) {
-        // Tell listeners first so e.g. "audio becoming noisy" handling is off before the DAC vanishes.
-        modeListeners.forEach { it.onDriverModeChanged(true) }
+        _state.value = _state.value.copy(busy = true, message = "Taking over the DAC…")
+        listeners.forEach { it.beforeTakeover() }
         withDevice({ msg ->
-            if (!isActive) modeListeners.forEach { it.onDriverModeChanged(false) }
+            val active = isActive
+            if (active) enabledByUser = true
+            _state.value = _state.value.copy(
+                active = active, busy = false, message = msg,
+                deviceName = if (active) _state.value.deviceName else null,
+                volume = if (active) _state.value.volume else null,
+            )
+            listeners.forEach { it.onDriverStateChanged(active, if (active) Reason.ENABLED else Reason.FAILED) }
             onResult(msg)
         }) { device -> openSession(device) }
     }
 
-    /** Hands the DAC back to Android. */
+    /** Hands the DAC back to Android and stops auto-enabling. */
     fun disable(onResult: (String) -> Unit) {
+        enabledByUser = false
+        _state.value = _state.value.copy(busy = true, message = "Handing the DAC back…")
         worker.execute {
             closeSession()
+            val msg = "Driver off · DAC handed back to Android"
             main.post {
-                modeListeners.forEach { it.onDriverModeChanged(false) }
-                onResult("Driver off · DAC handed back to Android")
+                _state.value = State(message = msg)
+                listeners.forEach { it.onVolumeChanged(null) }
+                listeners.forEach { it.onDriverStateChanged(false, Reason.DISABLED) }
+                onResult(msg)
             }
+        }
+    }
+
+    /** Worker thread: the DAC was unplugged. */
+    private fun onDisconnected() {
+        if (descriptor == null) return
+        closeSession()
+        main.post {
+            _state.value = State(message = "DAC disconnected · playback paused")
+            listeners.forEach { it.onVolumeChanged(null) }
+            listeners.forEach { it.onDriverStateChanged(false, Reason.DISCONNECTED) }
         }
     }
 
@@ -117,17 +212,66 @@ class UsbAudioDriver(private val context: Context) {
             return result
         }
         connection = conn
+        sessionDeviceName = device.deviceName
         descriptor = desc
         streamToken.incrementAndGet()
-        return "Driver on · ${device.productName} belongs to All-Meyn"
+
+        // Hardware volume: start from whatever the DAC is set to now (never jump louder).
+        volume = UsbDacVolume.open(conn, desc)
+        val vs = readVolumeState()
+        val name = device.productName ?: "USB DAC"
+        main.post {
+            _state.value = _state.value.copy(deviceName = name, volume = vs)
+            listeners.forEach { it.onVolumeChanged(vs) }
+        }
+        return "Driver on · $name belongs to All-Meyn" +
+            if (vs == null) " · no hardware volume, use the DAC's buttons" else ""
     }
 
     private fun closeSession() {
         descriptor = null
+        volume = null
+        sessionDeviceName = null
         streamToken.incrementAndGet()
         NativeUsb.close() // releases interfaces (Android's driver re-attaches) before the fd closes
         connection?.close()
         connection = null
+    }
+
+    // ---- hardware volume ----------------------------------------------------------------------
+
+    /** Worker thread. */
+    private fun readVolumeState(): VolumeState? {
+        val v = volume ?: return null
+        val step = v.readStep() ?: return null
+        return VolumeState(step, v.scale.maxStep, VolumeScale.rawToDb(v.scale.rawForStep(step)), v.readMuted(), v.hasMute)
+    }
+
+    fun setVolumeStep(step: Int) = volumeOp { v ->
+        v.setStep(step.coerceIn(0, v.scale.maxStep))
+        // Step 0 is "off": also mute when the DAC can.
+        if (v.hasMute) v.setMuted(step <= 0)
+    }
+
+    fun adjustVolume(delta: Int) = volumeOp { v ->
+        val cur = v.readStep() ?: return@volumeOp
+        val next = (cur + delta).coerceIn(0, v.scale.maxStep)
+        v.setStep(next)
+        if (v.hasMute) v.setMuted(next <= 0)
+    }
+
+    fun setMuted(muted: Boolean) = volumeOp { v -> v.setMuted(muted) }
+
+    private fun volumeOp(op: (UsbDacVolume) -> Unit) {
+        worker.execute {
+            val v = volume ?: return@execute
+            op(v)
+            val vs = readVolumeState()
+            main.post {
+                _state.value = _state.value.copy(volume = vs)
+                listeners.forEach { it.onVolumeChanged(vs) }
+            }
+        }
     }
 
     // ---- streams (playback thread) ------------------------------------------------------------
@@ -247,6 +391,9 @@ class UsbAudioDriver(private val context: Context) {
     }
 
     companion object {
+        private const val TAG = "UsbAudioDriver"
+        private const val KEY_ENABLED = "enabled"
+
         /** Queue depth between Media3 and the DAC. */
         const val RING_MS = 250
     }

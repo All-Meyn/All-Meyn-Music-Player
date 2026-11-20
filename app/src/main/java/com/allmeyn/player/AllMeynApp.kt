@@ -24,6 +24,8 @@ class AllMeynApp : Application() {
         super.onCreate()
         usbDac = UsbDacManager(this, AllMeynRenderersFactory.FLOAT_OUTPUT).also { it.start() }
         PluginHost.register(levelMeter)
+        // Re-enable the USB driver now if it was left on and the DAC is already plugged in.
+        usbDriver.maybeAutoEnable()
         // PluginHost.register(YourPlugin())
     }
 }
