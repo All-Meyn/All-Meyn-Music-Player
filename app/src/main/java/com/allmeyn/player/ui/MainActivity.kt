@@ -61,6 +61,7 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.allmeyn.player.AllMeynApp
 import com.allmeyn.player.playback.PlaybackService
+import com.allmeyn.player.usb.UsbAudioDriver
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
@@ -82,7 +83,7 @@ class MainActivity : ComponentActivity() {
         }
         val app = application as AllMeynApp
         // Launched by plugging in the DAC ("Always open All-Meyn"): permission is granted now.
-        app.usbDriver.maybeAutoEnable()
+        app.usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 PlayerScreen(controller, app, ::titleFor, ::enqueue)
@@ -92,7 +93,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        (application as AllMeynApp).usbDriver.maybeAutoEnable()
+        (application as AllMeynApp).usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
     }
 
     override fun onStart() {

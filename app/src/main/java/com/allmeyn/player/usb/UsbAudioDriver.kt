@@ -84,6 +84,9 @@ class UsbAudioDriver(private val context: Context) {
         get() = prefs.getBoolean(KEY_ENABLED, false)
         private set(value) = prefs.edit().putBoolean(KEY_ENABLED, value).apply()
 
+    /** Where Media3's audio currently goes (set by the output provider; shown in the status). */
+    @Volatile var mediaRoute: String = "not started"
+
     /** Bumped whenever the native stream is reconfigured; outputs holding an old token are stale. */
     private val streamToken = AtomicInteger(0)
 
@@ -99,10 +102,11 @@ class UsbAudioDriver(private val context: Context) {
                 UsbManager.ACTION_USB_DEVICE_DETACHED -> worker.execute {
                     if (device != null && device.deviceName == sessionDeviceName) onDisconnected()
                 }
-                // Permission may only be granted once the "open with" dialog is answered: retry.
+                // Give Android time to finish setting the DAC up, and retry in case permission
+                // only arrives once the "open with" dialog is answered.
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
-                    main.postDelayed({ maybeAutoEnable() }, 800)
-                    main.postDelayed({ maybeAutoEnable() }, 3000)
+                    maybeAutoEnable(ATTACH_SETTLE_MS)
+                    maybeAutoEnable(ATTACH_SETTLE_MS + 2000)
                 }
             }
         }
@@ -115,7 +119,6 @@ class UsbAudioDriver(private val context: Context) {
         }
         // System broadcasts still reach a non-exported receiver.
         ContextCompat.registerReceiver(context, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
-        main.post { maybeAutoEnable() }
     }
 
     fun findAudioDevice(): UsbDevice? = usbManager.deviceList.values.firstOrNull { d ->
@@ -128,7 +131,11 @@ class UsbAudioDriver(private val context: Context) {
      * Turns the driver on if the user left it on, the DAC is attached and we already have USB
      * permission (never prompts). Safe to call any time on the main thread.
      */
-    fun maybeAutoEnable() {
+    fun maybeAutoEnable(delayMs: Long = 0) {
+        if (delayMs > 0) {
+            main.postDelayed({ maybeAutoEnable() }, delayMs)
+            return
+        }
         if (!enabledByUser || isActive || _state.value.busy) return
         val device = findAudioDevice() ?: return
         if (!usbManager.hasPermission(device)) return
@@ -349,7 +356,7 @@ class UsbAudioDriver(private val context: Context) {
 
     fun status(onResult: (String) -> Unit) {
         worker.execute {
-            val s = NativeUsb.status()
+            val s = NativeUsb.status() + "\nPlayer output: " + mediaRoute
             main.post { onResult(s) }
         }
     }
@@ -393,6 +400,9 @@ class UsbAudioDriver(private val context: Context) {
     companion object {
         private const val TAG = "UsbAudioDriver"
         private const val KEY_ENABLED = "enabled"
+
+        /** Wait this long after a DAC is plugged in before taking it from Android. */
+        const val ATTACH_SETTLE_MS = 1500L
 
         /** Queue depth between Media3 and the DAC. */
         const val RING_MS = 250
