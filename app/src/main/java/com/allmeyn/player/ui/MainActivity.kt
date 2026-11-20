@@ -60,6 +60,7 @@ class MainActivity : ComponentActivity() {
 
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller by mutableStateOf<MediaController?>(null)
+    private val pendingItems = mutableListOf<MediaItem>()
 
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -72,7 +73,7 @@ class MainActivity : ComponentActivity() {
         val app = application as AllMeynApp
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                PlayerScreen(controller, app, ::titleFor)
+                PlayerScreen(controller, app, ::titleFor, ::enqueue)
             }
         }
     }
@@ -82,7 +83,34 @@ class MainActivity : ComponentActivity() {
         val token = SessionToken(this, ComponentName(this, PlaybackService::class.java))
         val future = MediaController.Builder(this, token).buildAsync()
         controllerFuture = future
-        future.addListener({ controller = future.get() }, ContextCompat.getMainExecutor(this))
+        future.addListener({
+            // Ignore a connection that onStop() already released.
+            if (controllerFuture !== future) return@addListener
+            val c = future.get()
+            controller = c
+            if (pendingItems.isNotEmpty()) {
+                addAndPlay(c, pendingItems.toList())
+                pendingItems.clear()
+            }
+        }, ContextCompat.getMainExecutor(this))
+    }
+
+    /**
+     * The file picker sends this activity to the background, which releases the controller, and
+     * its result arrives before the controller reconnects. Queue items until it's back.
+     */
+    private fun enqueue(items: List<MediaItem>) {
+        val c = controller
+        if (c == null) pendingItems += items else addAndPlay(c, items)
+    }
+
+    private fun addAndPlay(c: MediaController, items: List<MediaItem>) {
+        val wasEmpty = c.mediaItemCount == 0
+        c.addMediaItems(items)
+        if (wasEmpty) {
+            c.prepare()
+            c.play()
+        }
     }
 
     override fun onStop() {
@@ -100,7 +128,12 @@ class MainActivity : ComponentActivity() {
 
 @UnstableApi
 @Composable
-private fun PlayerScreen(controller: MediaController?, app: AllMeynApp, titleFor: (Uri) -> String) {
+private fun PlayerScreen(
+    controller: MediaController?,
+    app: AllMeynApp,
+    titleFor: (Uri) -> String,
+    onAddItems: (List<MediaItem>) -> Unit,
+) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val dac by app.usbDac.status.collectAsStateWithLifecycle()
 
@@ -136,7 +169,6 @@ private fun PlayerScreen(controller: MediaController?, app: AllMeynApp, titleFor
     }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        val c = controller ?: return@rememberLauncherForActivityResult
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         val items = uris.map { uri ->
             runCatching {
@@ -147,12 +179,7 @@ private fun PlayerScreen(controller: MediaController?, app: AllMeynApp, titleFor
                 .setMediaMetadata(MediaMetadata.Builder().setTitle(titleFor(uri)).build())
                 .build()
         }
-        val wasEmpty = c.mediaItemCount == 0
-        c.addMediaItems(items)
-        if (wasEmpty) {
-            c.prepare()
-            c.play()
-        }
+        onAddItems(items)
     }
 
     Scaffold { padding ->
