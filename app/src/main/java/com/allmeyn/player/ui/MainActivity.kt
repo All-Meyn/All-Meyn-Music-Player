@@ -60,6 +60,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.allmeyn.player.AllMeynApp
+import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.playback.PlaybackService
 import com.allmeyn.player.usb.UsbAudioDriver
 import com.google.common.util.concurrent.ListenableFuture
@@ -203,10 +204,12 @@ private fun PlayerScreen(
 
     var peak by remember { mutableFloatStateOf(0f) }
     var formatLabel by remember { mutableStateOf("—") }
+    var decoderLabel by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         while (true) {
             peak = app.levelMeter.peak
             formatLabel = app.levelMeter.formatLabel
+            decoderLabel = DecodeRegistry.lastDescription
             delay(100)
         }
     }
@@ -311,6 +314,7 @@ private fun PlayerScreen(
                 Column(Modifier.padding(12.dp)) {
                     Text("Plugin capture · ${app.levelMeter.name}", fontWeight = FontWeight.SemiBold)
                     Text(formatLabel, style = MaterialTheme.typography.bodySmall)
+                    decoderLabel?.let { Text("Decoder: $it", style = MaterialTheme.typography.bodySmall) }
                     Spacer(Modifier.height(8.dp))
                     LinearProgressIndicator(progress = { peak }, modifier = Modifier.fillMaxWidth())
                 }
@@ -332,7 +336,7 @@ private fun PlayerScreen(
                 }) { Text(if (isPlaying) "Pause" else "Play") }
                 OutlinedButton(onClick = { controller?.seekToNextMediaItem() }) { Text("Next") }
                 OutlinedButton(onClick = {
-                    picker.launch(arrayOf("audio/*", "application/octet-stream", "application/ogg"))
+                    picker.launch(arrayOf("audio/*", "application/octet-stream", "application/ogg", "application/x-ape"))
                 }) { Text("Add") }
             }
 

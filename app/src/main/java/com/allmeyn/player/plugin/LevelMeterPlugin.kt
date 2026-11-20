@@ -23,6 +23,15 @@ class LevelMeterPlugin : AudioCapturePlugin {
     private var encoding = C.ENCODING_INVALID
 
     override fun onConfigure(format: PcmFormat) {
+        if (format.isDop) {
+            // DoP carries DSD bits, not samples: nothing meaningful to meter.
+            encoding = C.ENCODING_INVALID
+            peak = 0f
+            val dsdRate = format.sampleRate * 16
+            val dsdClass = 64 * dsdRate / (if (dsdRate % 44_100 == 0) 2_822_400 else 3_072_000)
+            formatLabel = "DSD$dsdClass via DoP (DSD bits, not metered) · ${format.channelCount} ch"
+            return
+        }
         encoding = format.encoding
         val bits = when (format.encoding) {
             C.ENCODING_PCM_8BIT -> "8-bit"

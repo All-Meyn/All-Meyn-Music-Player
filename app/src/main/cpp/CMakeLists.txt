@@ -23,6 +23,26 @@ target_include_directories(usb1.0
 target_compile_options(usb1.0 PRIVATE -fvisibility=hidden -pthread)
 target_link_libraries(usb1.0 PRIVATE log)
 
-# ---- JNI bridge -------------------------------------------------------------------------------
-add_library(allmeyn_usb SHARED usb_audio_jni.c usb_audio_engine.c usb_audio_core.c)
+# ---- USB driver + file decoders (one JNI library) --------------------------------------------
+add_library(allmeyn_usb SHARED
+    usb_audio_jni.c usb_audio_engine.c usb_audio_core.c
+    decoder/dsd.c decoder/ffdec.c decoder/decoder_jni.c
+)
 target_link_libraries(allmeyn_usb PRIVATE usb1.0 log m)
+
+# ---- FFmpeg (APE/WavPack), optional: built by scripts/build-ffmpeg.sh --------------------------
+set(FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/${ANDROID_ABI})
+if(EXISTS ${FFMPEG_DIR}/lib/libavformat.a)
+    foreach(lib avformat avcodec avutil)
+        add_library(${lib} STATIC IMPORTED)
+        set_target_properties(${lib} PROPERTIES IMPORTED_LOCATION ${FFMPEG_DIR}/lib/lib${lib}.a)
+    endforeach()
+    target_compile_definitions(allmeyn_usb PRIVATE HAVE_FFMPEG=1)
+    target_include_directories(allmeyn_usb PRIVATE ${FFMPEG_DIR}/include)
+    target_link_libraries(allmeyn_usb PRIVATE avformat avcodec avutil)
+    # Keep FFmpeg's symbols private: the Media3 FFmpeg extension ships its own copy.
+    target_link_options(allmeyn_usb PRIVATE "-Wl,--exclude-libs,ALL")
+    message(STATUS "FFmpeg found for ${ANDROID_ABI}: APE/WavPack enabled")
+else()
+    message(WARNING "FFmpeg not built for ${ANDROID_ABI} (run scripts/build-ffmpeg.sh): APE/WavPack disabled")
+endif()

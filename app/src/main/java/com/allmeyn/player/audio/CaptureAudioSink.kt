@@ -7,6 +7,7 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.ForwardingAudioSink
+import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.plugin.PcmFormat
 import com.allmeyn.player.plugin.PluginHost
 import java.nio.ByteBuffer
@@ -41,6 +42,7 @@ class CaptureAudioSink(
                 sampleRate = inputFormat.sampleRate,
                 channelCount = inputFormat.channelCount,
                 bytesPerFrame = Util.getPcmFrameSize(inputFormat.pcmEncoding, inputFormat.channelCount),
+                isDop = DecodeRegistry.dopActive && inputFormat.pcmEncoding == C.ENCODING_PCM_24BIT,
             )
             // Must happen before the AudioTrack is created inside super.configure()/handleBuffer()
             // so a USB DAC can be switched to the matching bit-perfect mode first.

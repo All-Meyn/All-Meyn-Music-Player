@@ -79,6 +79,17 @@ class UsbAudioDriver(private val context: Context) {
     val isActive: Boolean
         get() = descriptor != null && NativeUsb.isAlive()
 
+    /**
+     * Whether DSD can go to the DAC as DoP right now: the driver is on and the DAC has a native
+     * DSD mode (DACs that take native DSD also accept DoP) plus a 24/32-bit PCM mode to carry it.
+     */
+    val supportsDop: Boolean
+        get() {
+            val d = descriptor ?: return false
+            return isActive && d.playbackAlts.any { !it.isPcm } &&
+                d.playbackAlts.any { it.isPcm && it.bitResolution >= 24 }
+        }
+
     /** Whether the user wants the driver on whenever the DAC is connected. */
     var enabledByUser: Boolean
         get() = prefs.getBoolean(KEY_ENABLED, false)
