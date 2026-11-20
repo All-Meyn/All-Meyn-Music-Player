@@ -19,8 +19,8 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
 
-      - name: Build debug APK
-        run: ./gradlew --no-daemon assembleDebug lintDebug
+      - name: Build debug APK, unit tests, lint
+        run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug
 
       - uses: actions/upload-artifact@v6
         if: always()

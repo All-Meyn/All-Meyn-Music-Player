@@ -15,6 +15,8 @@ import androidx.media3.exoplayer.audio.AudioOutputProvider.FormatConfig
 import androidx.media3.exoplayer.audio.AudioOutputProvider.FormatSupport
 import androidx.media3.exoplayer.audio.AudioOutputProvider.OutputConfig
 import androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider
+import androidx.media3.exoplayer.audio.ForwardingAudioOutput
+import java.nio.ByteBuffer
 import java.util.concurrent.CopyOnWriteArrayList
 
 /**
@@ -31,15 +33,16 @@ class UsbAudioOutputProvider(
     private val fallback = AudioTrackAudioOutputProvider.Builder(context).build()
     /** Each listener with the looper it registered on (DefaultAudioSink expects the playback thread). */
     private val listeners = CopyOnWriteArrayList<Pair<AudioOutputProvider.Listener, Handler>>()
-    private val main = Handler(Looper.getMainLooper())
 
-    private val modeListener = UsbAudioDriver.ModeListener {
-        // Lets DefaultAudioSink re-query format support after the driver turns on/off.
-        listeners.forEach { (l, handler) -> handler.post { l.onFormatSupportChanged() } }
+    private val driverListener = object : UsbAudioDriver.Listener {
+        override fun onDriverStateChanged(active: Boolean, reason: UsbAudioDriver.Reason) {
+            // Lets DefaultAudioSink re-query format support after the driver turns on/off.
+            listeners.forEach { (l, handler) -> handler.post { l.onFormatSupportChanged() } }
+        }
     }
 
     init {
-        main.post { driver.addModeListener(modeListener) }
+        driver.addListener(driverListener)
     }
 
     private fun usable(formatConfig: FormatConfig): Boolean {
@@ -71,17 +74,42 @@ class UsbAudioOutputProvider(
 
     override fun getAudioOutput(config: OutputConfig): AudioOutput {
         val channels = Integer.bitCount(config.channelMask)
-        if (driver.isActive && !config.isOffload && !config.isTunneling &&
-            driver.supportsPcm(config.encoding, channels)
-        ) {
+        val driverCanTake = !config.isOffload && !config.isTunneling && driver.supportsPcm(config.encoding, channels)
+        if (driverCanTake && driver.isActive) {
             val r = driver.configureStream(config.encoding, config.sampleRate, channels)
             if (r.token != null) {
+                driver.mediaRoute = "USB driver · ${config.sampleRate} Hz"
                 return UsbAudioOutput(driver, r.token, config.sampleRate, config.audioSessionId)
             }
             // e.g. the DAC refused this sample rate: play through Android instead of failing.
             Log.w(TAG, "USB driver can't take ${config.sampleRate} Hz: ${r.error}; using AudioTrack")
+            driver.mediaRoute = "Android (DAC refused ${config.sampleRate} Hz)"
+            return fallback.getAudioOutput(config)
         }
-        return fallback.getAudioOutput(config)
+        driver.mediaRoute = "Android AudioTrack"
+        val out = fallback.getAudioOutput(config)
+        // If the driver turns on later, hand this stream over to it.
+        return if (driverCanTake) ReroutingFallbackOutput(out, driver) else out
+    }
+
+    /**
+     * Android output used while the driver is off. Once the driver becomes active it stops
+     * accepting audio and reports itself stalled, so DefaultAudioSink rebuilds the output, which
+     * then goes to the driver. Works whatever order replug / auto-enable / play happen in.
+     */
+    private class ReroutingFallbackOutput(output: AudioOutput, private val driver: UsbAudioDriver) :
+        ForwardingAudioOutput(output) {
+        private var rerouting = false
+
+        override fun write(buffer: ByteBuffer, encodedAccessUnitCount: Int, presentationTimeUs: Long): Boolean {
+            if (rerouting || driver.isActive) {
+                rerouting = true
+                return false
+            }
+            return super.write(buffer, encodedAccessUnitCount, presentationTimeUs)
+        }
+
+        override fun isStalled() = rerouting || super.isStalled()
     }
 
     override fun addListener(listener: AudioOutputProvider.Listener) {
@@ -97,7 +125,7 @@ class UsbAudioOutputProvider(
     override fun setClock(clock: Clock) = fallback.setClock(clock)
 
     override fun release() {
-        main.post { driver.removeModeListener(modeListener) }
+        driver.removeListener(driverListener)
         fallback.release()
     }
 

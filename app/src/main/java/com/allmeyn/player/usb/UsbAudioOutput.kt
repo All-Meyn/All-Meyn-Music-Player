@@ -15,8 +15,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  * instant and Android never gets the DAC back mid-session.
  *
  * Called on the playback thread. If the driver was reconfigured by someone else (tone test,
- * driver turned off, DAC unplugged), [write] throws a recoverable error so DefaultAudioSink
- * builds a fresh output, which [UsbAudioOutputProvider] then routes to the right place.
+ * driver turned off, DAC unplugged), this output reports itself stalled: DefaultAudioSink then
+ * flushes and builds a fresh output, which [UsbAudioOutputProvider] routes to the right place.
+ * (Throwing instead would become a player error if nothing had been written yet.)
  */
 @UnstableApi
 class UsbAudioOutput(
@@ -30,6 +31,7 @@ class UsbAudioOutput(
     private var notifiedAdvancing = false
     private var lastPositionUs = 0L
     private var released = false
+    private var writeFailed = false
 
     private val isCurrent get() = !released && driver.currentToken() == token && driver.isActive
 
@@ -48,10 +50,13 @@ class UsbAudioOutput(
     }
 
     override fun write(buffer: ByteBuffer, encodedAccessUnitCount: Int, presentationTimeUs: Long): Boolean {
-        if (!isCurrent) throw AudioOutput.WriteException(ERROR_STALE, /* isRecoverable= */ true)
+        if (!isCurrent) return false // isStalled() is now true: the sink rebuilds the output
         val position = buffer.position()
         val consumed = NativeUsb.write(buffer, position, buffer.remaining())
-        if (consumed < 0) throw AudioOutput.WriteException(consumed, /* isRecoverable= */ true)
+        if (consumed < 0) {
+            writeFailed = true
+            return false
+        }
         buffer.position(position + consumed)
         return !buffer.hasRemaining()
     }
@@ -88,7 +93,8 @@ class UsbAudioOutput(
     }
 
     override fun getPlaybackParameters(): PlaybackParameters = PlaybackParameters.DEFAULT
-    override fun isStalled() = false
+    /** True once this output can no longer play (stale route or failed stream). */
+    override fun isStalled() = !released && (writeFailed || !isCurrent)
     override fun addListener(listener: AudioOutput.Listener) { listeners.add(listener) }
     override fun removeListener(listener: AudioOutput.Listener) { listeners.remove(listener) }
     override fun setPlaybackParameters(playbackParams: PlaybackParameters) {}
@@ -97,8 +103,4 @@ class UsbAudioOutput(
     override fun attachAuxEffect(effectId: Int) {}
     override fun setAuxEffectSendLevel(level: Float) {}
     override fun setPreferredDevice(preferredDevice: AudioDeviceInfo?) {}
-
-    private companion object {
-        const val ERROR_STALE = -100
-    }
 }
