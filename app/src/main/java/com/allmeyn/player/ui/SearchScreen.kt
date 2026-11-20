@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.media3.common.util.UnstableApi
 import com.allmeyn.player.library.Album
 import com.allmeyn.player.library.Artist
 import com.allmeyn.player.library.LibraryIndex
@@ -44,6 +45,7 @@ import com.allmeyn.player.library.MusicLibrary
 private const val MAX_TRACKS = 100
 
 /** Search songs, albums and artists. Every word typed must match (title, artist, album, year). */
+@UnstableApi
 @Composable
 fun SearchScreen(
     library: MusicLibrary.State,
