@@ -58,6 +58,7 @@ fun SettingsScreen(
     onDriver: (Boolean) -> Unit,
     onDacVolume: (Int) -> Unit,
     onNativeDsd: (Boolean) -> Unit,
+    onAutoForDsd: (Boolean) -> Unit,
     onProbe: ((String) -> Unit) -> Unit,
     onTone: (Int, Int) -> Unit,
     pluginName: String,
@@ -117,6 +118,16 @@ fun SettingsScreen(
                     )
                 }
                 Switch(checked = driver.nativeDsd, onCheckedChange = onNativeDsd)
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("Turn on for DSD", fontWeight = FontWeight.Medium)
+                    Text(
+                        "Switches the USB driver on by itself when a DSD song starts, so it plays as DSD instead of PCM. Other apps can't use the DAC while the driver is on.",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(checked = driver.autoForDsd, onCheckedChange = onAutoForDsd)
             }
             driver.volume?.let { v ->
                 Row(verticalAlignment = Alignment.CenterVertically) {

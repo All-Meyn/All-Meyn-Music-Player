@@ -1,6 +1,9 @@
 package com.allmeyn.player.playback
 
 import android.content.Intent
+import android.net.Uri
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.util.UnstableApi
@@ -63,11 +66,13 @@ class PlaybackService : MediaSessionService() {
 
             override fun onDriverStateChanged(active: Boolean, reason: UsbAudioDriver.Reason) {
                 player.setHandleAudioBecomingNoisy(!active)
+                // The user switched the driver off: don't grab the DAC back for this song.
+                if (reason == UsbAudioDriver.Reason.DISABLED) autoEnabledFor = player.currentMediaItem?.localConfiguration?.uri
                 // Unplugged mid-song: pause like a headphone unplug instead of jumping to the speaker.
                 if (reason == UsbAudioDriver.Reason.DISCONNECTED) player.pause()
                 if (player.mediaItemCount == 0 || reason == UsbAudioDriver.Reason.FAILED) return
                 val uri = player.currentMediaItem?.localConfiguration?.uri
-                val isDsd = uri != null && DecodeRegistry.isDsd(uri)
+                val isDsd = uri != null && (DecodeRegistry.isDsd(uri) || looksLikeDsd(uri))
                 // Native DSD on/off only matters for DSD; leave other songs alone.
                 if (reason == UsbAudioDriver.Reason.DSD_MODE_CHANGED && !isDsd) {
                     DecodeRegistry.resetModes()
@@ -84,6 +89,36 @@ class PlaybackService : MediaSessionService() {
         }
         driver.addListener(listener)
         driverListener = listener
+
+        // DSD only plays as DSD through the driver: turn it on when a DSD song starts.
+        player.addListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = maybeEnableDriverForDsd(player, driver)
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = maybeEnableDriverForDsd(player, driver)
+        })
+    }
+
+    /** The song the driver was last turned on for (or tried): don't retry the same one. */
+    private var autoEnabledFor: Uri? = null
+
+    /**
+     * When a DSD song is about to play and the driver is off, turns it on (only if the DAC is
+     * attached and permission was already given: never prompts). Playback pauses while the DAC is
+     * taken over; the driver listener then re-opens the song as native DSD / DoP, and it resumes.
+     */
+    private fun maybeEnableDriverForDsd(player: ExoPlayer, driver: UsbAudioDriver) {
+        if (!player.playWhenReady || !driver.autoEnableForDsd || driver.isActive) return
+        val uri = player.currentMediaItem?.localConfiguration?.uri ?: return
+        if (!(DecodeRegistry.isDsd(uri) || looksLikeDsd(uri)) || uri == autoEnabledFor) return
+        if (!driver.canEnableWithoutPrompt()) return
+        autoEnabledFor = uri
+        player.pause()
+        driver.enable { player.play() } // resumes on success, or as PCM if the driver failed
+    }
+
+    /** DSF/DFF by name (SAF document URIs end in the encoded file name). */
+    private fun looksLikeDsd(uri: Uri): Boolean {
+        val s = uri.toString().lowercase()
+        return s.endsWith(".dsf") || s.endsWith(".dff")
     }
 
     /** Re-prepares the playlist at the same item and position (keeps play/pause state). */

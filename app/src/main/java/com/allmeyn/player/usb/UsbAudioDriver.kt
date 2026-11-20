@@ -46,6 +46,7 @@ class UsbAudioDriver(private val context: Context) {
 
     data class State(
         val nativeDsd: Boolean = true,
+        val autoForDsd: Boolean = true,
         val active: Boolean = false,
         val busy: Boolean = false,
         val deviceName: String? = null,
@@ -67,7 +68,9 @@ class UsbAudioDriver(private val context: Context) {
     private val worker = Executors.newSingleThreadExecutor { Thread(it, "usb-driver") }
     private val listeners = CopyOnWriteArrayList<Listener>()
 
-    private val _state = MutableStateFlow(State(nativeDsd = prefs.getBoolean(KEY_NATIVE_DSD, true)))
+    private val _state = MutableStateFlow(
+        State(nativeDsd = prefs.getBoolean(KEY_NATIVE_DSD, true), autoForDsd = prefs.getBoolean(KEY_AUTO_FOR_DSD, true)),
+    )
     val state: StateFlow<State> = _state.asStateFlow()
 
     // Worker thread only.
@@ -128,6 +131,21 @@ class UsbAudioDriver(private val context: Context) {
             val maxFrameRate = framesPerPacket.toLong() * packetsPerSec
             return (maxFrameRate * 32).coerceAtMost(MAX_NATIVE_DSD_RATE.toLong()).toInt()
         }
+
+    /** Turn the driver on by itself when a DSD song starts (DSD needs it). User setting, on by default. */
+    var autoEnableForDsd: Boolean
+        get() = prefs.getBoolean(KEY_AUTO_FOR_DSD, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_AUTO_FOR_DSD, value).apply()
+            _state.value = _state.value.copy(autoForDsd = value)
+        }
+
+    /** The driver is off, a DAC is attached and we already have permission: [enable] won't prompt. */
+    fun canEnableWithoutPrompt(): Boolean {
+        if (isActive || _state.value.busy) return false
+        val device = findAudioDevice() ?: return false
+        return usbManager.hasPermission(device)
+    }
 
     /** Whether the user wants the driver on whenever the DAC is connected. */
     var enabledByUser: Boolean
@@ -217,7 +235,7 @@ class UsbAudioDriver(private val context: Context) {
             closeSession()
             val msg = "Driver off · DAC handed back to Android"
             main.post {
-                _state.value = State(nativeDsd = nativeDsdEnabled, message = msg)
+                _state.value = State(nativeDsd = nativeDsdEnabled, autoForDsd = autoEnableForDsd, message = msg)
                 listeners.forEach { it.onVolumeChanged(null) }
                 listeners.forEach { it.onDriverStateChanged(false, Reason.DISABLED) }
                 onResult(msg)
@@ -230,7 +248,7 @@ class UsbAudioDriver(private val context: Context) {
         if (descriptor == null) return
         closeSession()
         main.post {
-            _state.value = State(nativeDsd = nativeDsdEnabled, message = "DAC disconnected · playback paused")
+            _state.value = State(nativeDsd = nativeDsdEnabled, autoForDsd = autoEnableForDsd, message = "DAC disconnected · playback paused")
             listeners.forEach { it.onVolumeChanged(null) }
             listeners.forEach { it.onDriverStateChanged(false, Reason.DISCONNECTED) }
         }
@@ -488,6 +506,7 @@ class UsbAudioDriver(private val context: Context) {
         private const val KEY_VOLUME_RAW = "dac_volume_raw" // 1/256 dB
         private const val KEY_VOLUME_MUTED = "dac_volume_muted"
         private const val KEY_NATIVE_DSD = "native_dsd"
+        private const val KEY_AUTO_FOR_DSD = "auto_for_dsd"
 
         /** DSD512 (48 kHz family). */
         private const val MAX_NATIVE_DSD_RATE = 24_576_000
