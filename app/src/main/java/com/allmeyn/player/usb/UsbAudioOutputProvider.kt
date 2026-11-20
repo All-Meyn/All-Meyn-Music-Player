@@ -1,0 +1,107 @@
+package com.allmeyn.player.usb
+
+import android.content.Context
+import android.media.AudioFormat
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.Clock
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
+import androidx.media3.exoplayer.audio.AudioOutput
+import androidx.media3.exoplayer.audio.AudioOutputProvider
+import androidx.media3.exoplayer.audio.AudioOutputProvider.FormatConfig
+import androidx.media3.exoplayer.audio.AudioOutputProvider.FormatSupport
+import androidx.media3.exoplayer.audio.AudioOutputProvider.OutputConfig
+import androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider
+import java.util.concurrent.CopyOnWriteArrayList
+
+/**
+ * Routes Media3's final PCM to the custom USB driver while it's enabled, and to a normal
+ * AudioTrack otherwise (or for anything the driver can't take: offload, tunneling, >2 channels,
+ * a sample rate the DAC refuses).
+ */
+@UnstableApi
+class UsbAudioOutputProvider(
+    context: Context,
+    private val driver: UsbAudioDriver,
+) : AudioOutputProvider {
+
+    private val fallback = AudioTrackAudioOutputProvider.Builder(context).build()
+    /** Each listener with the looper it registered on (DefaultAudioSink expects the playback thread). */
+    private val listeners = CopyOnWriteArrayList<Pair<AudioOutputProvider.Listener, Handler>>()
+    private val main = Handler(Looper.getMainLooper())
+
+    private val modeListener = UsbAudioDriver.ModeListener {
+        // Lets DefaultAudioSink re-query format support after the driver turns on/off.
+        listeners.forEach { (l, handler) -> handler.post { l.onFormatSupportChanged() } }
+    }
+
+    init {
+        main.post { driver.addModeListener(modeListener) }
+    }
+
+    private fun usable(formatConfig: FormatConfig): Boolean {
+        val f = formatConfig.format
+        return driver.isActive && MimeTypes.AUDIO_RAW == f.sampleMimeType &&
+            driver.supportsPcm(f.pcmEncoding, f.channelCount) && !formatConfig.enableTunneling
+    }
+
+    override fun getFormatSupport(formatConfig: FormatConfig): FormatSupport =
+        if (usable(formatConfig)) {
+            FormatSupport.Builder().setFormatSupportLevel(AudioOutputProvider.FORMAT_SUPPORTED_DIRECTLY).build()
+        } else {
+            fallback.getFormatSupport(formatConfig)
+        }
+
+    override fun getOutputConfig(formatConfig: FormatConfig): OutputConfig {
+        if (!usable(formatConfig)) return fallback.getOutputConfig(formatConfig)
+        val f = formatConfig.format
+        val frameBytes = Util.getPcmFrameSize(f.pcmEncoding, f.channelCount)
+        return OutputConfig.Builder()
+            .setEncoding(f.pcmEncoding)
+            .setSampleRate(f.sampleRate)
+            .setChannelMask(if (f.channelCount == 1) AudioFormat.CHANNEL_OUT_MONO else AudioFormat.CHANNEL_OUT_STEREO)
+            .setBufferSize(f.sampleRate * UsbAudioDriver.RING_MS / 1000 * frameBytes)
+            .setAudioAttributes(formatConfig.audioAttributes)
+            .setAudioSessionId(formatConfig.audioSessionId)
+            .build()
+    }
+
+    override fun getAudioOutput(config: OutputConfig): AudioOutput {
+        val channels = Integer.bitCount(config.channelMask)
+        if (driver.isActive && !config.isOffload && !config.isTunneling &&
+            driver.supportsPcm(config.encoding, channels)
+        ) {
+            val r = driver.configureStream(config.encoding, config.sampleRate, channels)
+            if (r.token != null) {
+                return UsbAudioOutput(driver, r.token, config.sampleRate, config.audioSessionId)
+            }
+            // e.g. the DAC refused this sample rate: play through Android instead of failing.
+            Log.w(TAG, "USB driver can't take ${config.sampleRate} Hz: ${r.error}; using AudioTrack")
+        }
+        return fallback.getAudioOutput(config)
+    }
+
+    override fun addListener(listener: AudioOutputProvider.Listener) {
+        listeners.add(listener to Handler(Looper.myLooper() ?: Looper.getMainLooper()))
+        fallback.addListener(listener)
+    }
+
+    override fun removeListener(listener: AudioOutputProvider.Listener) {
+        listeners.removeAll { it.first === listener }
+        fallback.removeListener(listener)
+    }
+
+    override fun setClock(clock: Clock) = fallback.setClock(clock)
+
+    override fun release() {
+        main.post { driver.removeModeListener(modeListener) }
+        fallback.release()
+    }
+
+    private companion object {
+        const val TAG = "UsbAudioOutputProvider"
+    }
+}

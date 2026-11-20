@@ -34,6 +34,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
@@ -164,23 +165,42 @@ private fun PlayerScreen(
         onDispose { c?.removeListener(listener) }
     }
 
-    val usbProbe = app.usbDriver
+    val usbDriver = app.usbDriver
     var probeText by remember { mutableStateOf("") }
+    var driverMsg by remember { mutableStateOf("") }
     var driverStatus by remember { mutableStateOf("") }
-    var driverRunning by remember { mutableStateOf(false) }
-    LaunchedEffect(driverRunning) {
-        while (driverRunning) {
-            usbProbe.status { driverStatus = it }
+    var driverOn by remember { mutableStateOf(usbDriver.isActive) }
+    LaunchedEffect(driverOn) {
+        while (driverOn) {
+            usbDriver.status { driverStatus = it }
             delay(500)
         }
     }
-    fun startTone(rate: Int, bits: Int) {
-        controller?.pause() // Android loses the DAC while our driver owns it
-        probeText = "Starting $rate Hz / $bits-bit…"
-        usbProbe.startTone(rate, bits) {
-            probeText = it
-            driverRunning = it.startsWith("Streaming")
+    var driverBusy by remember { mutableStateOf(false) }
+    fun setDriver(on: Boolean) {
+        val c = controller
+        val wasPlaying = c?.isPlaying == true
+        c?.pause()
+        driverBusy = true
+        driverMsg = if (on) "Taking over the DAC…" else "Handing the DAC back…"
+        val done: (String) -> Unit = { msg ->
+            driverBusy = false
+            driverMsg = msg
+            driverOn = usbDriver.isActive
+            if (!driverOn) driverStatus = ""
+            // Seeking rebuilds Media3's audio output, which picks the new route.
+            c?.let {
+                it.seekTo(it.currentPosition)
+                if (wasPlaying) it.play()
+            }
         }
+        if (on) usbDriver.enable(done) else usbDriver.disable(done)
+    }
+    var toneActive by remember { mutableStateOf(false) }
+    fun startTone(rate: Int, bits: Int) {
+        controller?.pause()
+        toneActive = true
+        usbDriver.startTone(rate, bits) { driverMsg = it }
     }
 
     var peak by remember { mutableFloatStateOf(0f) }
@@ -224,26 +244,32 @@ private fun PlayerScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("USB driver · probe", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                        Text("USB driver", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                         OutlinedButton(onClick = {
                             probeText = "Probing…"
-                            usbProbe.probe { probeText = it }
+                            usbDriver.probe { probeText = it }
                         }) { Text("Probe DAC") }
                     }
-                    Text(
-                        "Test tone: 440 Hz at −24 dBFS. Android's volume doesn't apply — turn the KA17 down first.",
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        OutlinedButton(onClick = { startTone(44100, 16) }) { Text("44.1k/16") }
-                        OutlinedButton(onClick = { startTone(96000, 32) }) { Text("96k/32") }
-                        Button(onClick = {
-                            driverRunning = false
-                            usbProbe.stop { driverStatus = it }
-                        }) { Text("Stop") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Bit-perfect USB driver", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Bypasses Android's mixer. Android volume doesn't apply — use the DAC's volume.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Switch(checked = driverOn, enabled = !driverBusy, onCheckedChange = { setDriver(it) })
                     }
+                    if (driverMsg.isNotEmpty()) Text(driverMsg, style = MaterialTheme.typography.bodySmall)
                     if (driverStatus.isNotEmpty()) {
                         Text(driverStatus, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    }
+                    if (driverOn) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Test tone", style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = { startTone(44100, 16) }) { Text("44.1k/16") }
+                            OutlinedButton(onClick = { startTone(96000, 32) }) { Text("96k/32") }
+                        }
                     }
                     if (probeText.isNotEmpty()) {
                         // Own scroll area so a long report doesn't push the playlist off screen.
@@ -266,7 +292,16 @@ private fun PlayerScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = { controller?.seekToPreviousMediaItem() }) { Text("Prev") }
                 Button(onClick = {
-                    controller?.let { if (it.isPlaying) it.pause() else it.play() }
+                    controller?.let {
+                        if (it.isPlaying) {
+                            it.pause()
+                        } else {
+                            // The tone took over the driver's stream: rebuild the music output first.
+                            if (toneActive) it.seekTo(it.currentPosition)
+                            toneActive = false
+                            it.play()
+                        }
+                    }
                 }) { Text(if (isPlaying) "Pause" else "Play") }
                 OutlinedButton(onClick = { controller?.seekToNextMediaItem() }) { Text("Next") }
                 OutlinedButton(onClick = {
