@@ -1,11 +1,13 @@
 // All-Meyn USB Audio Class 2 streaming engine.
 //
-// Stage 2: takes the DAC away from Android's kernel driver, sets the sample rate on the UAC2
-// clock source, and streams a sine test tone over isochronous OUT transfers, pacing itself with
-// the DAC's asynchronous feedback endpoint. Stage 3 swaps the tone for a ring buffer of music.
+// A long-lived *session* owns the DAC (interfaces claimed, Android's driver detached) and a libusb
+// event thread. Inside the session, a *stream* runs at one sample rate / alt setting and keeps
+// isochronous OUT transfers flowing, paced by the DAC's async feedback endpoint. Each packet is
+// filled from the ring buffer (music, written by Media3's playback thread), from the tone
+// generator (test), or with silence (paused / underrun).
 //
-// Threading: JNI calls (start/stop/status) come from a Kotlin worker thread. All libusb transfer
-// callbacks run on this engine's own event thread.
+// Threads: JNI control calls hold g_lock. The USB event thread runs all transfer callbacks and
+// never takes g_lock; it talks to the rest through atomics and the lock-free ring.
 
 #define _GNU_SOURCE  // gettid() on glibc; bionic always has it
 #include <jni.h>
@@ -20,110 +22,136 @@
 #include <sys/resource.h>
 #include <unistd.h>
 
+#include "usb_audio_core.h"
+
 #define TAG "AllMeynUsb"
-#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
 #define NUM_TRANSFERS 8         // in flight
 #define PACKETS_PER_TRANSFER 8  // 8 packets = 1 ms at high speed
 #define TWO_PI 6.283185307179586
 
+enum { SRC_RING = 0, SRC_TONE = 1 };
+
+typedef struct Engine Engine;
+
 typedef struct {
+    Engine *e;
+    uint32_t ring_frames;  // frames of music this transfer carried
+    uint32_t gen;          // flush generation it was filled in
+} XferCtx;
+
+struct Engine {
+    // ---- session (fixed while open) ----
     libusb_context *ctx;
     libusb_device_handle *h;
-    int control_if, stream_if, alt;
-    int ep_out, ep_fb, max_packet, fb_max_packet;
-    int subslot, channels, frame_bytes;
-    int rate;
-    uint32_t confirmed_rate;
-    int packets_per_sec;
-    int uframes_per_packet;  // bus intervals per packet (feedback is per bus interval)
-    double nominal_fpp;      // frames per packet
-    _Atomic double feedback_fpp;  // 0 until first valid feedback
-    double frac_acc;
-
-    // Tone generator (stage 2 source).
-    double phase, phase_inc, amp;
-
-    struct libusb_transfer *out[NUM_TRANSFERS];
-    struct libusb_transfer *fb;
-    uint8_t fb_buf[8];
-
-    atomic_int running;
-    atomic_int active;  // transfers submitted and not yet returned
+    int control_if, clock_id, stream_if;
+    int ep_out, ep_fb, fb_max_packet, ep_interval;
+    int high_speed;
+    atomic_int session_alive;
+    atomic_int dead;  // device vanished
     pthread_t thread;
     int thread_started;
 
-    atomic_ulong packets_sent, frames_sent, fb_count, errors;
-    char last_error[128];
-} Engine;
+    // ---- stream (changes on reconfigure; touched by callbacks only while streaming) ----
+    int streaming;
+    int alt, max_packet, subslot, out_channels, frame_bytes, rate;
+    uint32_t confirmed_rate;
+    int uframes_per_packet, packets_per_sec;
+    double nominal_fpp;
+    _Atomic double feedback_fpp;
+    double frac_acc;
+    struct libusb_transfer *out[NUM_TRANSFERS];
+    XferCtx out_ctx[NUM_TRANSFERS];
+    struct libusb_transfer *fb;
+    uint8_t fb_buf[8];
+    atomic_int stream_running;
+    atomic_int active;
 
-static Engine *g_engine = NULL;
+    // ---- source ----
+    Ring ring;
+    int in_format, in_channels;  // producer side only
+    atomic_int source;
+    atomic_int playing;
+    atomic_uint gen;
+    _Atomic uint64_t played_frames;
+    double phase, phase_inc;
+
+    // ---- stats ----
+    atomic_ulong packets_sent, fb_count, errors, underruns;
+    char last_error[160];
+};
+
+static Engine *g = NULL;
 static pthread_mutex_t g_lock = PTHREAD_MUTEX_INITIALIZER;
 
-// ---- sample source ------------------------------------------------------------------------------
-
-static void write_sample(uint8_t *p, int subslot, double s) {
-    if (s > 1.0) s = 1.0;
-    if (s < -1.0) s = -1.0;
-    if (subslot == 2) {
-        int16_t v = (int16_t) lrint(s * 32767.0);
-        memcpy(p, &v, 2);  // Android ABIs are little-endian, as USB audio expects.
-    } else if (subslot == 3) {
-        int32_t v = (int32_t) lrint(s * 8388607.0);
-        p[0] = (uint8_t) v; p[1] = (uint8_t) (v >> 8); p[2] = (uint8_t) (v >> 16);
-    } else {  // 4-byte slot, left-justified
-        int32_t v = (int32_t) lrint(s * 2147483647.0);
-        memcpy(p, &v, 4);
-    }
+static int fail(Engine *e, const char *what, int rc) {
+    snprintf(e->last_error, sizeof(e->last_error), "%s: %s", what, libusb_error_name(rc));
+    LOGE("%s", e->last_error);
+    return rc;
 }
 
-/** Fills one packet; returns its length in bytes. */
-static int fill_packet(Engine *e, uint8_t *buf) {
+// ---- packet filling (event thread) ----------------------------------------------------------------
+
+static int fill_packet(Engine *e, uint8_t *buf, uint32_t *ring_frames_out) {
     double fb = atomic_load(&e->feedback_fpp);
     e->frac_acc += (fb > 0) ? fb : e->nominal_fpp;
     int frames = (int) e->frac_acc;
     e->frac_acc -= frames;
     int max_frames = e->max_packet / e->frame_bytes;
     if (frames > max_frames) frames = max_frames;
+    int bytes = frames * e->frame_bytes;
 
-    uint8_t *p = buf;
-    for (int f = 0; f < frames; f++) {
-        double s = sin(e->phase) * e->amp;
-        e->phase += e->phase_inc;
-        if (e->phase >= TWO_PI) e->phase -= TWO_PI;
-        for (int c = 0; c < e->channels; c++) {
-            write_sample(p, e->subslot, s);
-            p += e->subslot;
+    int got = 0;
+    if (atomic_load(&e->playing)) {
+        if (atomic_load(&e->source) == SRC_TONE) {
+            for (int f = 0; f < frames; f++) {
+                int32_t v = (int32_t) lrint(sin(e->phase) * 0.0631 * 2147483647.0);  // -24 dBFS
+                e->phase += e->phase_inc;
+                if (e->phase >= TWO_PI) e->phase -= TWO_PI;
+                for (int c = 0; c < e->out_channels; c++) {
+                    s32_to_slot(buf + f * e->frame_bytes + c * e->subslot, e->subslot, v);
+                }
+            }
+            got = frames;
+        } else {
+            got = (int) ring_read(&e->ring, buf, (uint32_t) frames);
+            *ring_frames_out += (uint32_t) got;
+            if (got < frames) atomic_fetch_add(&e->underruns, 1);
         }
     }
-    atomic_fetch_add(&e->frames_sent, (unsigned long) frames);
-    return frames * e->frame_bytes;
+    if (got < frames) memset(buf + got * e->frame_bytes, 0, (size_t) (frames - got) * e->frame_bytes);
+    return bytes;
 }
 
-// ---- transfers ----------------------------------------------------------------------------------
-
 static int fill_and_submit_out(Engine *e, struct libusb_transfer *t) {
+    XferCtx *x = (XferCtx *) t->user_data;
+    x->ring_frames = 0;
+    x->gen = atomic_load(&e->gen);
     int offset = 0;
     for (int i = 0; i < t->num_iso_packets; i++) {
-        int len = fill_packet(e, t->buffer + offset);
+        int len = fill_packet(e, t->buffer + offset, &x->ring_frames);
         t->iso_packet_desc[i].length = (unsigned int) len;
         offset += len;
     }
     t->length = offset;
     int rc = libusb_submit_transfer(t);
-    if (rc == LIBUSB_SUCCESS) {
-        atomic_fetch_add(&e->packets_sent, (unsigned long) t->num_iso_packets);
-    }
+    if (rc == LIBUSB_SUCCESS) atomic_fetch_add(&e->packets_sent, (unsigned long) t->num_iso_packets);
     return rc;
 }
 
 static void LIBUSB_CALL out_callback(struct libusb_transfer *t) {
-    Engine *e = (Engine *) t->user_data;
-    if (t->status != LIBUSB_TRANSFER_COMPLETED && t->status != LIBUSB_TRANSFER_CANCELLED) {
-        atomic_fetch_add(&e->errors, 1);
+    XferCtx *x = (XferCtx *) t->user_data;
+    Engine *e = x->e;
+    if (t->status == LIBUSB_TRANSFER_COMPLETED && x->gen == atomic_load(&e->gen)) {
+        // Data has left the host: count it as played (drives Media3's playback clock).
+        atomic_fetch_add(&e->played_frames, x->ring_frames);
     }
-    if (!atomic_load(&e->running) || t->status == LIBUSB_TRANSFER_CANCELLED ||
+    if (t->status == LIBUSB_TRANSFER_NO_DEVICE) atomic_store(&e->dead, 1);
+    else if (t->status != LIBUSB_TRANSFER_COMPLETED && t->status != LIBUSB_TRANSFER_CANCELLED)
+        atomic_fetch_add(&e->errors, 1);
+
+    if (!atomic_load(&e->stream_running) || t->status == LIBUSB_TRANSFER_CANCELLED ||
         t->status == LIBUSB_TRANSFER_NO_DEVICE) {
         atomic_fetch_sub(&e->active, 1);
         return;
@@ -140,27 +168,25 @@ static void LIBUSB_CALL fb_callback(struct libusb_transfer *t) {
         int n = (int) t->iso_packet_desc[0].actual_length;
         const uint8_t *b = t->buffer;
         double value = 0;
-        if (n >= 4) {         // high speed: Q16.16 frames per microframe
-            uint32_t q = (uint32_t) b[0] | ((uint32_t) b[1] << 8) | ((uint32_t) b[2] << 16) | ((uint32_t) b[3] << 24);
-            value = q / 65536.0;
+        if (n >= 4) {  // high speed: Q16.16 frames per microframe
+            value = ((uint32_t) b[0] | ((uint32_t) b[1] << 8) | ((uint32_t) b[2] << 16) | ((uint32_t) b[3] << 24)) / 65536.0;
         } else if (n == 3) {  // full speed: Q10.14 frames per frame
-            uint32_t q = (uint32_t) b[0] | ((uint32_t) b[1] << 8) | ((uint32_t) b[2] << 16);
-            value = q / 16384.0;
+            value = ((uint32_t) b[0] | ((uint32_t) b[1] << 8) | ((uint32_t) b[2] << 16)) / 16384.0;
         }
         double fpp = value * e->uframes_per_packet;
-        // Some DACs use a non-standard fixed-point position (Linux's snd-usb-audio corrects for
-        // this the same way): shift by powers of two until it lands near nominal.
+        // Non-standard fixed-point positions: shift by powers of two (as Linux snd-usb-audio does).
         for (int k = 0; k < 4 && fpp > 0 && fpp < e->nominal_fpp * 0.5; k++) fpp *= 2;
         for (int k = 0; k < 4 && fpp > e->nominal_fpp * 1.5; k++) fpp /= 2;
-        // Ignore garbage: accept only within ±12.5% of nominal.
         if (fpp > e->nominal_fpp * 0.875 && fpp < e->nominal_fpp * 1.125) {
             atomic_store(&e->feedback_fpp, fpp);
             atomic_fetch_add(&e->fb_count, 1);
         }
+    } else if (t->status == LIBUSB_TRANSFER_NO_DEVICE) {
+        atomic_store(&e->dead, 1);
     } else if (t->status != LIBUSB_TRANSFER_CANCELLED) {
         atomic_fetch_add(&e->errors, 1);
     }
-    if (!atomic_load(&e->running) || t->status == LIBUSB_TRANSFER_CANCELLED ||
+    if (!atomic_load(&e->stream_running) || t->status == LIBUSB_TRANSFER_CANCELLED ||
         t->status == LIBUSB_TRANSFER_NO_DEVICE || libusb_submit_transfer(t) != LIBUSB_SUCCESS) {
         atomic_fetch_sub(&e->active, 1);
     }
@@ -168,190 +194,325 @@ static void LIBUSB_CALL fb_callback(struct libusb_transfer *t) {
 
 static void *event_thread(void *arg) {
     Engine *e = (Engine *) arg;
-    // Same priority Android gives its own audio threads (THREAD_PRIORITY_URGENT_AUDIO).
-    setpriority(PRIO_PROCESS, (id_t) gettid(), -19);
-    struct timeval tv = {0, 100000};
-    while (atomic_load(&e->running) || atomic_load(&e->active) > 0) {
+    setpriority(PRIO_PROCESS, (id_t) gettid(), -19);  // THREAD_PRIORITY_URGENT_AUDIO
+    struct timeval tv = {0, 50000};
+    while (atomic_load(&e->session_alive) || atomic_load(&e->active) > 0) {
         libusb_handle_events_timeout_completed(e->ctx, &tv, NULL);
     }
     return NULL;
 }
 
-// ---- lifecycle ----------------------------------------------------------------------------------
+// ---- stream control (g_lock held) -----------------------------------------------------------------
 
-static void engine_teardown(Engine *e) {
-    atomic_store(&e->running, 0);
+static void stream_stop(Engine *e) {
+    if (!e->streaming) return;
+    atomic_store(&e->stream_running, 0);
     for (int i = 0; i < NUM_TRANSFERS; i++) if (e->out[i]) libusb_cancel_transfer(e->out[i]);
     if (e->fb) libusb_cancel_transfer(e->fb);
-    if (e->thread_started) {
-        pthread_join(e->thread, NULL);
-    } else if (e->ctx) {
-        // Start failed after some transfers were submitted: reap them before freeing (max ~1 s).
-        struct timeval tv = {0, 50000};
-        for (int tries = 0; atomic_load(&e->active) > 0 && tries < 20; tries++) {
-            libusb_handle_events_timeout_completed(e->ctx, &tv, NULL);
-        }
-    }
+    // The event thread reaps the cancelled transfers; wait up to ~1 s.
+    for (int i = 0; i < 1000 && atomic_load(&e->active) > 0; i++) usleep(1000);
     for (int i = 0; i < NUM_TRANSFERS; i++) {
         if (e->out[i]) {
             free(e->out[i]->buffer);
             libusb_free_transfer(e->out[i]);
+            e->out[i] = NULL;
         }
     }
-    if (e->fb) libusb_free_transfer(e->fb);
-    if (e->h) {
-        libusb_set_interface_alt_setting(e->h, e->stream_if, 0);
-        // Auto-detach is on, so releasing hands the interfaces back to Android's driver.
-        libusb_release_interface(e->h, e->stream_if);
-        libusb_release_interface(e->h, e->control_if);
-        libusb_close(e->h);
+    if (e->fb) {
+        libusb_free_transfer(e->fb);
+        e->fb = NULL;
     }
-    if (e->ctx) libusb_exit(e->ctx);
-    free(e);
+    libusb_set_interface_alt_setting(e->h, e->stream_if, 0);
+    e->streaming = 0;
 }
 
-static int fail(Engine *e, const char *what, int rc) {
-    snprintf(e->last_error, sizeof(e->last_error), "%s: %s", what, libusb_error_name(rc));
-    LOGE("%s", e->last_error);
-    return rc;
-}
-
-static int set_clock(Engine *e, int clock_id) {
+static int set_clock(Engine *e) {
     uint8_t d[4] = {(uint8_t) e->rate, (uint8_t) (e->rate >> 8), (uint8_t) (e->rate >> 16), (uint8_t) (e->rate >> 24)};
-    uint16_t w_index = (uint16_t) ((clock_id << 8) | e->control_if);
-    // SET CUR, CS_SAM_FREQ_CONTROL
-    int rc = libusb_control_transfer(e->h, 0x21, 0x01, 0x0100, w_index, d, 4, 1000);
+    uint16_t w_index = (uint16_t) ((e->clock_id << 8) | e->control_if);
+    int rc = libusb_control_transfer(e->h, 0x21, 0x01, 0x0100, w_index, d, 4, 1000);  // SET CUR
     if (rc < 0) return fail(e, "set sample rate", rc);
     uint8_t r[4] = {0};
-    rc = libusb_control_transfer(e->h, 0xA1, 0x01, 0x0100, w_index, r, 4, 1000);
-    if (rc == 4) e->confirmed_rate = r[0] | (r[1] << 8) | (r[2] << 16) | ((uint32_t) r[3] << 24);
+    rc = libusb_control_transfer(e->h, 0xA1, 0x01, 0x0100, w_index, r, 4, 1000);  // GET CUR
+    e->confirmed_rate = rc == 4 ? (r[0] | (r[1] << 8) | (r[2] << 16) | ((uint32_t) r[3] << 24)) : 0;
+    if (e->confirmed_rate != 0 && e->confirmed_rate != (uint32_t) e->rate) {
+        snprintf(e->last_error, sizeof(e->last_error), "DAC refused %d Hz (reports %u Hz)",
+                 e->rate, e->confirmed_rate);
+        return LIBUSB_ERROR_INVALID_PARAM;
+    }
     return LIBUSB_SUCCESS;
 }
 
-static int engine_start(Engine *e, int fd, int clock_id, int ep_interval, double tone_hz) {
-    libusb_set_option(NULL, LIBUSB_OPTION_NO_DEVICE_DISCOVERY);
-    int rc = libusb_init_context(&e->ctx, NULL, 0);
-    if (rc) return fail(e, "libusb init", rc);
-    rc = libusb_wrap_sys_device(e->ctx, (intptr_t) fd, &e->h);
-    if (rc) return fail(e, "wrap fd", rc);
-
-    libusb_set_auto_detach_kernel_driver(e->h, 1);
-    rc = libusb_claim_interface(e->h, e->control_if);
-    if (rc) return fail(e, "claim control interface", rc);
-    rc = libusb_claim_interface(e->h, e->stream_if);
-    if (rc) return fail(e, "claim streaming interface", rc);
-
+static int stream_start(Engine *e) {
     libusb_set_interface_alt_setting(e->h, e->stream_if, 0);
-    rc = set_clock(e, clock_id);
+    int rc = set_clock(e);
     if (rc) return rc;
     rc = libusb_set_interface_alt_setting(e->h, e->stream_if, e->alt);
     if (rc) return fail(e, "set alt setting", rc);
 
-    int speed = libusb_get_device_speed(libusb_get_device(e->h));
-    if (speed >= LIBUSB_SPEED_HIGH) {
-        int shift = ep_interval > 0 ? ep_interval - 1 : 0;
-        e->uframes_per_packet = 1 << shift;
-        e->packets_per_sec = 8000 / e->uframes_per_packet;
-    } else {
-        e->uframes_per_packet = 1;
-        e->packets_per_sec = 1000;
-    }
-    e->frame_bytes = e->subslot * e->channels;
+    e->uframes_per_packet = e->high_speed ? 1 << (e->ep_interval > 0 ? e->ep_interval - 1 : 0) : 1;
+    e->packets_per_sec = e->high_speed ? 8000 / e->uframes_per_packet : 1000;
     e->nominal_fpp = (double) e->rate / e->packets_per_sec;
-    e->phase_inc = TWO_PI * tone_hz / e->rate;
-    e->amp = 0.0631;  // -24 dBFS: audible but gentle (Android volume doesn't apply here)
-    atomic_store(&e->running, 1);
+    atomic_store(&e->feedback_fpp, 0.0);
+    e->frac_acc = 0;
+    atomic_store(&e->stream_running, 1);
+    e->streaming = 1;
 
-    // Feedback IN endpoint.
     if (e->ep_fb > 0) {
         e->fb = libusb_alloc_transfer(1);
         int fb_len = e->fb_max_packet > 0 && e->fb_max_packet <= (int) sizeof(e->fb_buf) ? e->fb_max_packet : 4;
         libusb_fill_iso_transfer(e->fb, e->h, (unsigned char) e->ep_fb, e->fb_buf, fb_len, 1, fb_callback, e, 1000);
         libusb_set_iso_packet_lengths(e->fb, (unsigned int) fb_len);
-        if (libusb_submit_transfer(e->fb) == LIBUSB_SUCCESS) atomic_fetch_add(&e->active, 1);
-        else atomic_fetch_add(&e->errors, 1);
+        atomic_fetch_add(&e->active, 1);
+        if (libusb_submit_transfer(e->fb) != LIBUSB_SUCCESS) {
+            atomic_fetch_sub(&e->active, 1);
+            atomic_fetch_add(&e->errors, 1);
+        }
     }
-
-    // Data OUT endpoint.
     for (int i = 0; i < NUM_TRANSFERS; i++) {
         struct libusb_transfer *t = libusb_alloc_transfer(PACKETS_PER_TRANSFER);
         uint8_t *buf = calloc((size_t) PACKETS_PER_TRANSFER, (size_t) e->max_packet);
-        if (!t || !buf) return fail(e, "allocate transfers", LIBUSB_ERROR_NO_MEM);
+        if (!t || !buf) {
+            free(buf);
+            if (t) libusb_free_transfer(t);
+            stream_stop(e);
+            return fail(e, "allocate transfers", LIBUSB_ERROR_NO_MEM);
+        }
+        e->out_ctx[i].e = e;
         libusb_fill_iso_transfer(t, e->h, (unsigned char) e->ep_out, buf,
                                  PACKETS_PER_TRANSFER * e->max_packet, PACKETS_PER_TRANSFER,
-                                 out_callback, e, 1000);
+                                 out_callback, &e->out_ctx[i], 1000);
         e->out[i] = t;
-        rc = fill_and_submit_out(e, t);
-        if (rc) return fail(e, "submit iso OUT", rc);
         atomic_fetch_add(&e->active, 1);
+        rc = fill_and_submit_out(e, t);
+        if (rc) {
+            atomic_fetch_sub(&e->active, 1);
+            stream_stop(e);
+            return fail(e, "submit iso OUT", rc);
+        }
     }
-
-    if (pthread_create(&e->thread, NULL, event_thread, e) != 0) {
-        return fail(e, "start event thread", LIBUSB_ERROR_OTHER);
-    }
-    e->thread_started = 1;
     return LIBUSB_SUCCESS;
+}
+
+static void reset_position(Engine *e) {
+    atomic_store(&e->playing, 0);
+    ring_flush(&e->ring);
+    atomic_fetch_add(&e->gen, 1);
+    atomic_store(&e->played_frames, 0);
+}
+
+static void session_close(Engine *e) {
+    if (!e) return;
+    if (e->h) stream_stop(e);
+    atomic_store(&e->session_alive, 0);
+    if (e->thread_started) pthread_join(e->thread, NULL);
+    if (e->h) {
+        // Auto-detach is on: releasing hands the interfaces back to Android's driver.
+        libusb_release_interface(e->h, e->stream_if);
+        libusb_release_interface(e->h, e->control_if);
+        libusb_close(e->h);
+    }
+    if (e->ctx) libusb_exit(e->ctx);
+    ring_free(&e->ring);
+    free(e);
 }
 
 // ---- JNI ----------------------------------------------------------------------------------------
 
+#define JNI_FN(name) Java_com_allmeyn_player_usb_NativeUsb_##name
+
 JNIEXPORT jstring JNICALL
-Java_com_allmeyn_player_usb_NativeUsb_startTone(
-        JNIEnv *env, jclass clazz, jint fd, jint control_if, jint clock_id, jint stream_if,
-        jint alt, jint ep_out, jint ep_fb, jint max_packet, jint fb_max_packet, jint ep_interval,
-        jint subslot, jint channels, jint rate, jdouble tone_hz) {
+JNI_FN(open)(JNIEnv *env, jclass clazz, jint fd, jint control_if, jint clock_id, jint stream_if,
+             jint ep_out, jint ep_fb, jint fb_max_packet, jint ep_interval) {
     (void) clazz;
     pthread_mutex_lock(&g_lock);
-    if (g_engine) {
-        engine_teardown(g_engine);
-        g_engine = NULL;
-    }
+    session_close(g);
+    g = NULL;
     Engine *e = calloc(1, sizeof(Engine));
-    e->control_if = control_if; e->stream_if = stream_if; e->alt = alt;
-    e->ep_out = ep_out; e->ep_fb = ep_fb; e->max_packet = max_packet; e->fb_max_packet = fb_max_packet;
-    e->subslot = subslot; e->channels = channels; e->rate = rate;
+    e->control_if = control_if; e->clock_id = clock_id; e->stream_if = stream_if;
+    e->ep_out = ep_out; e->ep_fb = ep_fb; e->fb_max_packet = fb_max_packet; e->ep_interval = ep_interval;
 
-    char msg[192];
-    int rc = engine_start(e, fd, clock_id, ep_interval, tone_hz);
-    if (rc != LIBUSB_SUCCESS) {
+    char msg[200];
+    int rc;
+    libusb_set_option(NULL, LIBUSB_OPTION_NO_DEVICE_DISCOVERY);
+    if ((rc = libusb_init_context(&e->ctx, NULL, 0))) fail(e, "libusb init", rc);
+    else if ((rc = libusb_wrap_sys_device(e->ctx, (intptr_t) fd, &e->h))) fail(e, "wrap fd", rc);
+    else {
+        libusb_set_auto_detach_kernel_driver(e->h, 1);
+        if ((rc = libusb_claim_interface(e->h, control_if))) fail(e, "claim control interface", rc);
+        else if ((rc = libusb_claim_interface(e->h, stream_if))) fail(e, "claim streaming interface", rc);
+    }
+    if (rc == 0) {
+        e->high_speed = libusb_get_device_speed(libusb_get_device(e->h)) >= LIBUSB_SPEED_HIGH;
+        atomic_store(&e->session_alive, 1);
+        if (pthread_create(&e->thread, NULL, event_thread, e) != 0) {
+            rc = fail(e, "start event thread", LIBUSB_ERROR_OTHER);
+        } else {
+            e->thread_started = 1;
+        }
+    }
+    if (rc) {
         snprintf(msg, sizeof(msg), "ERROR %s", e->last_error);
-        engine_teardown(e);
+        if (e->h) {
+            libusb_release_interface(e->h, stream_if);
+            libusb_release_interface(e->h, control_if);
+            libusb_close(e->h);
+            e->h = NULL;
+        }
+        atomic_store(&e->session_alive, 0);
+        session_close(e);
     } else {
-        snprintf(msg, sizeof(msg), "Streaming %d Hz tone · requested %d Hz · DAC reports %u Hz",
-                 (int) tone_hz, rate, e->confirmed_rate);
-        g_engine = e;
+        snprintf(msg, sizeof(msg), "OK");
+        g = e;
     }
     pthread_mutex_unlock(&g_lock);
     return (*env)->NewStringUTF(env, msg);
 }
 
-JNIEXPORT void JNICALL
-Java_com_allmeyn_player_usb_NativeUsb_stop(JNIEnv *env, jclass clazz) {
+JNIEXPORT jstring JNICALL
+JNI_FN(configure)(JNIEnv *env, jclass clazz, jint alt, jint max_packet, jint subslot,
+                  jint out_channels, jint rate, jint in_format, jint in_channels, jint ring_ms) {
+    (void) clazz;
+    char msg[200];
+    pthread_mutex_lock(&g_lock);
+    Engine *e = g;
+    if (!e) {
+        snprintf(msg, sizeof(msg), "ERROR driver not open");
+    } else if (atomic_load(&e->dead)) {
+        snprintf(msg, sizeof(msg), "ERROR DAC disconnected");
+    } else {
+        int same = e->streaming && e->alt == alt && e->rate == rate && e->subslot == subslot &&
+                   e->out_channels == out_channels && e->max_packet == max_packet;
+        int rc = 0;
+        if (!same) {
+            stream_stop(e);
+            e->alt = alt; e->max_packet = max_packet; e->subslot = subslot;
+            e->out_channels = out_channels; e->rate = rate;
+            e->frame_bytes = subslot * out_channels;
+            ring_free(&e->ring);
+            uint32_t frames = (uint32_t) ((int64_t) rate * ring_ms / 1000);
+            if (ring_init(&e->ring, frames, (uint32_t) e->frame_bytes) != 0) {
+                rc = fail(e, "allocate ring", LIBUSB_ERROR_NO_MEM);
+            }
+        }
+        e->in_format = in_format;
+        e->in_channels = in_channels;
+        atomic_store(&e->source, SRC_RING);
+        reset_position(e);
+        if (rc == 0 && !same) rc = stream_start(e);
+        if (rc) snprintf(msg, sizeof(msg), "ERROR %s", e->last_error);
+        else snprintf(msg, sizeof(msg), "OK %u", e->confirmed_rate);
+    }
+    pthread_mutex_unlock(&g_lock);
+    return (*env)->NewStringUTF(env, msg);
+}
+
+JNIEXPORT jint JNICALL
+JNI_FN(write)(JNIEnv *env, jclass clazz, jobject buffer, jint offset, jint length) {
+    (void) clazz;
+    jint result;
+    pthread_mutex_lock(&g_lock);
+    Engine *e = g;
+    uint8_t *base = (uint8_t *) (*env)->GetDirectBufferAddress(env, buffer);
+    if (!e || !e->streaming || atomic_load(&e->dead) || !base) {
+        result = -1;
+    } else {
+        result = (jint) ring_write_converted(&e->ring, base + offset, (size_t) length, e->in_format,
+                                             e->in_channels, e->subslot, e->out_channels);
+    }
+    pthread_mutex_unlock(&g_lock);
+    return result;
+}
+
+JNIEXPORT void JNICALL JNI_FN(play)(JNIEnv *env, jclass clazz) {
     (void) env; (void) clazz;
     pthread_mutex_lock(&g_lock);
-    if (g_engine) {
-        engine_teardown(g_engine);
-        g_engine = NULL;
-    }
+    if (g) atomic_store(&g->playing, 1);
     pthread_mutex_unlock(&g_lock);
 }
 
-JNIEXPORT jstring JNICALL
-Java_com_allmeyn_player_usb_NativeUsb_status(JNIEnv *env, jclass clazz) {
-    (void) clazz;
-    char msg[256];
+JNIEXPORT void JNICALL JNI_FN(pause)(JNIEnv *env, jclass clazz) {
+    (void) env; (void) clazz;
     pthread_mutex_lock(&g_lock);
-    Engine *e = g_engine;
+    if (g) atomic_store(&g->playing, 0);
+    pthread_mutex_unlock(&g_lock);
+}
+
+JNIEXPORT void JNICALL JNI_FN(flush)(JNIEnv *env, jclass clazz) {
+    (void) env; (void) clazz;
+    pthread_mutex_lock(&g_lock);
+    if (g && g->streaming) reset_position(g);
+    pthread_mutex_unlock(&g_lock);
+}
+
+JNIEXPORT jlong JNICALL JNI_FN(playedFrames)(JNIEnv *env, jclass clazz) {
+    (void) env; (void) clazz;
+    // Locked: close() on another thread may free the engine.
+    pthread_mutex_lock(&g_lock);
+    jlong n = g ? (jlong) atomic_load(&g->played_frames) : 0;
+    pthread_mutex_unlock(&g_lock);
+    return n;
+}
+
+JNIEXPORT jint JNICALL JNI_FN(ringFrames)(JNIEnv *env, jclass clazz) {
+    (void) env; (void) clazz;
+    pthread_mutex_lock(&g_lock);
+    jint n = g ? (jint) g->ring.capacity_frames : 0;
+    pthread_mutex_unlock(&g_lock);
+    return n;
+}
+
+JNIEXPORT jboolean JNICALL JNI_FN(isAlive)(JNIEnv *env, jclass clazz) {
+    (void) env; (void) clazz;
+    pthread_mutex_lock(&g_lock);
+    jboolean alive = g != NULL && !atomic_load(&g->dead);
+    pthread_mutex_unlock(&g_lock);
+    return alive;
+}
+
+JNIEXPORT jstring JNICALL
+JNI_FN(startTone)(JNIEnv *env, jclass clazz, jint alt, jint max_packet, jint subslot,
+                  jint out_channels, jint rate, jdouble tone_hz) {
+    jstring res = JNI_FN(configure)(env, clazz, alt, max_packet, subslot, out_channels, rate,
+                                    IN_S32, out_channels, 100);
+    pthread_mutex_lock(&g_lock);
+    if (g && g->streaming) {
+        g->phase = 0;
+        g->phase_inc = TWO_PI * tone_hz / rate;
+        atomic_store(&g->source, SRC_TONE);
+        atomic_store(&g->playing, 1);
+    }
+    pthread_mutex_unlock(&g_lock);
+    return res;
+}
+
+JNIEXPORT void JNICALL JNI_FN(close)(JNIEnv *env, jclass clazz) {
+    (void) env; (void) clazz;
+    pthread_mutex_lock(&g_lock);
+    session_close(g);
+    g = NULL;
+    pthread_mutex_unlock(&g_lock);
+}
+
+JNIEXPORT jstring JNICALL JNI_FN(status)(JNIEnv *env, jclass clazz) {
+    (void) clazz;
+    char msg[320];
+    pthread_mutex_lock(&g_lock);
+    Engine *e = g;
     if (!e) {
         snprintf(msg, sizeof(msg), "Driver stopped");
+    } else if (!e->streaming) {
+        snprintf(msg, sizeof(msg), "DAC claimed · idle%s", atomic_load(&e->dead) ? " · DISCONNECTED" : "");
     } else {
-        double fb = atomic_load(&e->feedback_fpp);
         snprintf(msg, sizeof(msg),
-                 "%s · %d Hz · %d-bit slot\npackets %lu · frames %lu · feedback %lu (%.4f fr/pkt, nominal %.4f) · errors %lu · in-flight %d",
-                 atomic_load(&e->running) ? "Running" : "Stopping", e->rate, e->subslot * 8,
-                 atomic_load(&e->packets_sent), atomic_load(&e->frames_sent),
-                 atomic_load(&e->fb_count), fb, e->nominal_fpp,
-                 atomic_load(&e->errors), atomic_load(&e->active));
+                 "%s · %s · %d Hz · %d-bit slot · alt %d%s\n"
+                 "buffer %u/%u fr · played %llu fr · feedback %.4f (nominal %.4f) · underruns %lu · errors %lu",
+                 atomic_load(&e->source) == SRC_TONE ? "Tone" : "Music",
+                 atomic_load(&e->playing) ? "playing" : "paused",
+                 e->rate, e->subslot * 8, e->alt, atomic_load(&e->dead) ? " · DISCONNECTED" : "",
+                 ring_available(&e->ring), e->ring.capacity_frames,
+                 (unsigned long long) atomic_load(&e->played_frames),
+                 atomic_load(&e->feedback_fpp), e->nominal_fpp,
+                 atomic_load(&e->underruns), atomic_load(&e->errors));
     }
     pthread_mutex_unlock(&g_lock);
     return (*env)->NewStringUTF(env, msg);
