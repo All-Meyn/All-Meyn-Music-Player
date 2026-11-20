@@ -12,3 +12,7 @@
 *.aab
 *.keystore
 *.jks
+
+# FFmpeg build output (scripts/build-ffmpeg.sh)
+/app/src/main/cpp/ffmpeg/
+/build/

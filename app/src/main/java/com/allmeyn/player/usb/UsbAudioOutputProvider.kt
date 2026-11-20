@@ -84,10 +84,10 @@ class UsbAudioOutputProvider(
             // e.g. the DAC refused this sample rate: play through Android instead of failing.
             Log.w(TAG, "USB driver can't take ${config.sampleRate} Hz: ${r.error}; using AudioTrack")
             driver.mediaRoute = "Android (DAC refused ${config.sampleRate} Hz)"
-            return fallback.getAudioOutput(config)
+            return DopGuardOutput.wrapIfNeeded(fallback.getAudioOutput(config), config.encoding, config.sampleRate, channels)
         }
         driver.mediaRoute = "Android AudioTrack"
-        val out = fallback.getAudioOutput(config)
+        val out = DopGuardOutput.wrapIfNeeded(fallback.getAudioOutput(config), config.encoding, config.sampleRate, channels)
         // If the driver turns on later, hand this stream over to it.
         return if (driverCanTake) ReroutingFallbackOutput(out, driver) else out
     }

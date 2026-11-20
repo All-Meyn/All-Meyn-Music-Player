@@ -55,11 +55,13 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.allmeyn.player.AllMeynApp
+import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.playback.PlaybackService
 import com.allmeyn.player.usb.UsbAudioDriver
 import com.google.common.util.concurrent.ListenableFuture
@@ -158,11 +160,13 @@ private fun PlayerScreen(
     var isPlaying by remember { mutableStateOf(false) }
     var currentIndex by remember { mutableIntStateOf(-1) }
     var titles by remember { mutableStateOf(emptyList<String>()) }
+    var playerError by remember { mutableStateOf<String?>(null) }
 
     DisposableEffect(controller) {
         val c = controller
         fun sync(p: Player) {
             isPlaying = p.isPlaying
+            if (p.playerError == null && p.playbackState != Player.STATE_IDLE) playerError = null
             currentIndex = p.currentMediaItemIndex
             titles = (0 until p.mediaItemCount).map {
                 p.getMediaItemAt(it).mediaMetadata.title?.toString() ?: "Track ${it + 1}"
@@ -170,6 +174,13 @@ private fun PlayerScreen(
         }
         val listener = object : Player.Listener {
             override fun onEvents(player: Player, events: Player.Events) = sync(player)
+
+            override fun onPlayerError(error: PlaybackException) {
+                // Media3 nests the real reason; show the whole chain so failures aren't silent.
+                val chain = generateSequence(error as Throwable) { it.cause }.take(4)
+                    .joinToString(" ← ") { "${it.javaClass.simpleName}: ${it.message}" }
+                playerError = "${error.errorCodeName}\n$chain"
+            }
         }
         c?.addListener(listener)
         c?.let(::sync)
@@ -203,10 +214,14 @@ private fun PlayerScreen(
 
     var peak by remember { mutableFloatStateOf(0f) }
     var formatLabel by remember { mutableStateOf("—") }
+    var decoderLabel by remember { mutableStateOf<String?>(null) }
+    var decoderError by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(Unit) {
         while (true) {
             peak = app.levelMeter.peak
             formatLabel = app.levelMeter.formatLabel
+            decoderLabel = DecodeRegistry.lastDescription
+            decoderError = DecodeRegistry.lastError
             delay(100)
         }
     }
@@ -231,6 +246,20 @@ private fun PlayerScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             Text("All-Meyn Player", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+
+            val problem = listOfNotNull(playerError, decoderError?.let { "Decoder: $it" }).joinToString("\n")
+            if (problem.isNotEmpty()) {
+                Card(Modifier.fillMaxWidth()) {
+                    SelectionContainer {
+                        Text(
+                            "Playback error\n$problem",
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall,
+                            modifier = Modifier.padding(12.dp),
+                        )
+                    }
+                }
+            }
 
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
@@ -311,6 +340,7 @@ private fun PlayerScreen(
                 Column(Modifier.padding(12.dp)) {
                     Text("Plugin capture · ${app.levelMeter.name}", fontWeight = FontWeight.SemiBold)
                     Text(formatLabel, style = MaterialTheme.typography.bodySmall)
+                    decoderLabel?.let { Text("Decoder: $it", style = MaterialTheme.typography.bodySmall) }
                     Spacer(Modifier.height(8.dp))
                     LinearProgressIndicator(progress = { peak }, modifier = Modifier.fillMaxWidth())
                 }
@@ -332,7 +362,7 @@ private fun PlayerScreen(
                 }) { Text(if (isPlaying) "Pause" else "Play") }
                 OutlinedButton(onClick = { controller?.seekToNextMediaItem() }) { Text("Next") }
                 OutlinedButton(onClick = {
-                    picker.launch(arrayOf("audio/*", "application/octet-stream", "application/ogg"))
+                    picker.launch(arrayOf("audio/*", "application/octet-stream", "application/ogg", "application/x-ape"))
                 }) { Text("Add") }
             }
 

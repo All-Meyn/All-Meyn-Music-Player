@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  # Must match android.ndkVersion in app/build.gradle.kts (FFmpeg and the app share it).
+  NDK_VERSION: 27.0.12077973
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -17,10 +21,49 @@ jobs:
           distribution: temurin
           java-version: 17
 
+      - name: Native host tests (ring buffer, PCM conversion, DSD)
+        run: native-tests/run.sh
+
+      - name: Install NDK
+        run: |
+          SDKMANAGER="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | tail -1)"
+          yes | "$SDKMANAGER" "ndk;$NDK_VERSION" | tail -2
+
+      - name: Cache FFmpeg (APE/WavPack)
+        id: ffmpeg-cache
+        uses: actions/cache@v5
+        with:
+          path: app/src/main/cpp/ffmpeg
+          key: ffmpeg-${{ hashFiles('scripts/build-ffmpeg.sh') }}-ndk-${{ env.NDK_VERSION }}
+
+      - name: Build FFmpeg (APE/WavPack)
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: scripts/build-ffmpeg.sh "$ANDROID_HOME/ndk/$NDK_VERSION"
+
+      - name: Check FFmpeg is present for every ABI
+        run: |
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            test -f "app/src/main/cpp/ffmpeg/$abi/lib/libavformat.a" || { echo "missing FFmpeg for $abi"; exit 1; }
+          done
+
       - uses: gradle/actions/setup-gradle@v5
 
       - name: Build debug APK, unit tests, lint
         run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug
+
+      - name: Check APE/WavPack decoders are linked into the APK
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          for abi in arm64-v8a armeabi-v7a x86_64; do
+            SO="$(mktemp)"
+            unzip -p "$APK" "lib/$abi/liballmeyn_usb.so" > "$SO"
+            # Symbols are stripped; FFmpeg's codec names survive as strings.
+            if grep -qa "FFmpeg missing" "$SO"; then echo "$abi: built without FFmpeg"; exit 1; fi
+            for name in "Monkey's Audio" "WavPack"; do
+              grep -qa "$name" "$SO" || { echo "$abi: '$name' codec not found"; exit 1; }
+            done
+            echo "$abi: APE + WavPack decoders linked ($(stat -c %s "$SO") bytes)"
+          done
 
       - uses: actions/upload-artifact@v6
         if: always()
@@ -29,3 +72,31 @@ jobs:
           path: |
             app/build/outputs/apk/debug/*.apk
             app/build/reports/lint-results-debug.html
+
+      # Plays DSF/DFF/APE/WavPack through the real pipeline on an Android emulator.
+      - name: Free disk space for the emulator
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost
+          df -h / | tail -1
+
+      - name: Enable KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Emulator playback tests
+        uses: ReactiveCircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          disk-size: 3000M
+          script: ./gradlew --no-daemon connectedDebugAndroidTest
+
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: emulator-test-report
+          path: app/build/reports/androidTests/
