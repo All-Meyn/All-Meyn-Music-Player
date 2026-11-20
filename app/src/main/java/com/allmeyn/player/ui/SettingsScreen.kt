@@ -82,7 +82,7 @@ fun SettingsScreen(
                 OutlinedButton(onClick = onRescan, enabled = !library.scanning && library.folders.isNotEmpty()) { Text("Rescan") }
             }
             Text(
-                if (library.scanning) library.progress else "${library.tracks.size} tracks · ${library.albums.size} albums",
+                if (library.scanning) library.progress else "${countOf(library.tracks.size, "track")} · ${countOf(library.albums.size, "album")}",
                 style = MaterialTheme.typography.bodySmall,
             )
         }

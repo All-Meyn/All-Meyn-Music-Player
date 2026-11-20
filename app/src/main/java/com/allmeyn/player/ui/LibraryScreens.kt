@@ -94,7 +94,7 @@ fun AlbumDetail(album: Album, playingUri: String, player: PlayerUi) {
                     Text(album.artist, style = MaterialTheme.typography.titleSmall)
                     val meta = listOfNotNull(
                         album.year.takeIf { it > 0 }?.toString(),
-                        "${album.tracks.size} tracks",
+                        countOf(album.tracks.size, "track"),
                         formatTime(album.durationMs),
                         album.tracks.first().qualityLabel,
                     )
@@ -132,7 +132,7 @@ fun ArtistsList(artists: List<Artist>, onOpen: (Artist) -> Unit) {
                 Artwork(a.albums.firstOrNull { it.art.isNotEmpty() }?.art.orEmpty(), Modifier.size(52.dp), corner = 26.dp)
                 Column(Modifier.padding(start = 12.dp)) {
                     Text(a.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${a.albums.size} albums · ${a.trackCount} tracks", style = MaterialTheme.typography.bodySmall)
+                    Text("${countOf(a.albums.size, "album")} · ${countOf(a.trackCount, "track")}", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }

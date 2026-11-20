@@ -107,7 +107,7 @@ fun NowPlaying(
         InfoLine("Source", sourceLabel)
         InfoLine(
             "Output",
-            if (driver.active) "${driver.deviceName ?: "USB DAC"} · All-Meyn USB driver · bit-perfect · $driverRoute"
+            if (driver.active) "${driver.deviceName ?: "USB DAC"} · All-Meyn USB driver · bit-perfect · ${driverRoute.removePrefix("USB driver · ")}"
             else "Android audio",
         )
         if (!sourceLabel.contains("DoP")) {

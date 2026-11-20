@@ -150,3 +150,6 @@ fun formatTime(ms: Long): String {
     val s = (ms / 1000).coerceAtLeast(0)
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
 }
+
+/** "1 album", "3 albums". */
+fun countOf(n: Int, word: String): String = if (n == 1) "1 $word" else "$n ${word}s"
