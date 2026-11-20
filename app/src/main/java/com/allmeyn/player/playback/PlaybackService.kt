@@ -45,6 +45,8 @@ class PlaybackService : MediaSessionService() {
                 ),
             )
             .build()
+        // Keeps "Play next" next while shuffle is on (Media3's default scatters added songs).
+        player.setShuffleOrder(QueueShuffleOrder())
 
         // Volume keys / system volume slider drive the DAC's hardware volume while the driver is on.
         val sessionPlayer = DacVolumePlayer(player, driver)

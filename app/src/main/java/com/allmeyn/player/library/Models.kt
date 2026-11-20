@@ -121,6 +121,38 @@ object LibraryIndex {
         return top.values.map { it.freeze() }
     }
 
+    /** What a search found, each list in the library's usual order. */
+    data class SearchResults(val artists: List<Artist>, val albums: List<Album>, val tracks: List<Track>) {
+        val isEmpty get() = artists.isEmpty() && albums.isEmpty() && tracks.isEmpty()
+    }
+
+    /** Lower case, accents removed: "Beyoncé" matches "beyonce". */
+    fun fold(s: String): String =
+        java.text.Normalizer.normalize(s, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+            .lowercase()
+
+    /**
+     * Every word of [query] must appear somewhere in the item's text, in any order:
+     * "yes love" finds "Rhythm Of Love" by Yes. Blank query finds nothing.
+     */
+    fun search(query: String, artists: List<Artist>, albums: List<Album>, tracks: List<Track>): SearchResults =
+        SearchIndex(artists, albums, tracks).find(query)
+
+    /** Search text prepared once per library, so typing only does substring checks. */
+    class SearchIndex(artists: List<Artist>, albums: List<Album>, tracks: List<Track>) {
+        private val artists = artists.map { it to fold(it.name) }
+        private val albums = albums.map { it to fold("${it.title} ${it.artist} ${it.year.takeIf { y -> y > 0 } ?: ""}") }
+        private val tracks = tracksByTitle(tracks).map { it to fold("${it.title} ${it.artist} ${it.album} ${it.albumArtist}") }
+
+        fun find(query: String): SearchResults {
+            val words = fold(query).split(Regex("\\s+")).filter { it.isNotEmpty() }
+            if (words.isEmpty()) return SearchResults(emptyList(), emptyList(), emptyList())
+            fun <T> List<Pair<T, String>>.hits() = filter { (_, text) -> words.all { text.contains(it) } }.map { it.first }
+            return SearchResults(artists.hits(), albums.hits(), tracks.hits())
+        }
+    }
+
     /** "3", "03", "3/12" -> 3; anything else -> 0. */
     fun parseNumber(s: String?): Int = s?.trim()?.substringBefore('/')?.trim()?.toIntOrNull() ?: 0
 

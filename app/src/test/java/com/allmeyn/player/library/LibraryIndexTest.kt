@@ -77,4 +77,33 @@ class LibraryIndexTest {
         assertEquals("FLAC · 24/96", t("a").copy(bits = 24, sampleRate = 96000).qualityLabel)
         assertEquals("DSF DSD64", t("a").copy(format = "DSF DSD64", sampleRate = 2822400, bits = 1).qualityLabel)
     }
+
+    @Test fun searchMatchesAllWordsAnyField() {
+        val tracks = listOf(
+            t("Rhythm Of Love", track = 1), t("Shoot High Aim Low", track = 3),
+            t("Owner Of A Lonely Heart", album = "90125", year = 1983),
+            t("Seeds", artist = "Jan Hammer", album = "Beyond the Mind's Eye", year = 1992),
+        )
+        val albums = LibraryIndex.albums(tracks)
+        val artists = LibraryIndex.artists(albums)
+        fun s(q: String) = LibraryIndex.search(q, artists, albums, tracks)
+
+        assertEquals(listOf("Rhythm Of Love"), s("yes love").tracks.map { it.title })
+        assertEquals(listOf("Jan Hammer"), s("HAMMER").artists.map { it.name })
+        assertEquals(listOf("90125"), s("1983").albums.map { it.title })
+        assertEquals(listOf("Beyond the Mind's Eye"), s("mind").albums.map { it.title })
+        assertEquals(4, s("e").tracks.size) // every track mentions an "e" somewhere
+        assertEquals(true, s("   ").isEmpty)
+        assertEquals(true, s("zeppelin").isEmpty)
+    }
+
+    @Test fun searchIgnoresAccents() {
+        val tracks = listOf(t("Déjà Vu", artist = "Beyoncé", album = "B'Day"))
+        val albums = LibraryIndex.albums(tracks)
+        val r = LibraryIndex.search("beyonce deja", LibraryIndex.artists(albums), albums, tracks)
+        assertEquals(listOf("Déjà Vu"), r.tracks.map { it.title })
+        assertEquals(0, r.artists.size) // "deja" isn't in the artist name
+        val a = LibraryIndex.search("BEYONCE", LibraryIndex.artists(albums), albums, tracks)
+        assertEquals(listOf("Beyoncé"), a.artists.map { it.name })
+    }
 }
