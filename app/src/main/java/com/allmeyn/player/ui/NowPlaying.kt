@@ -1,10 +1,13 @@
 package com.allmeyn.player.ui
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -47,13 +50,46 @@ fun NowPlaying(
     dspOn: Boolean,
     onDacVolume: (Int) -> Unit,
 ) {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-            .padding(bottom = LocalBottomBarPadding.current).padding(horizontal = 24.dp, vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Artwork(player.artPath, Modifier.widthIn(max = 380.dp).fillMaxWidth().aspectRatio(1f), corner = 16.dp)
-        Spacer(Modifier.height(20.dp))
+    val details: @Composable () -> Unit = {
+        NowPlayingDetails(player, sourceLabel, peak, driver, driverRoute, gainLabel, dspOn, onDacVolume)
+    }
+    val wide = LocalWindowSize.current.wide
+    BoxWithConstraints(Modifier.fillMaxSize().padding(bottom = LocalBottomBarPadding.current)) {
+        if (maxWidth > maxHeight && maxWidth >= 560.dp) {
+            // Sideways phone or open Fold: the cover on the left, everything else beside it.
+            val art = minOf(maxHeight - 24.dp, maxWidth * 0.45f)
+            Row(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically) {
+                Artwork(player.artPath, Modifier.size(art), corner = 16.dp)
+                Box(Modifier.weight(1f).fillMaxHeight().padding(start = 24.dp), contentAlignment = Alignment.Center) {
+                    Column(Modifier.widthIn(max = 560.dp).verticalScroll(rememberScrollState()).padding(vertical = 12.dp)) { details() }
+                }
+            }
+        } else {
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Artwork(player.artPath, Modifier.widthIn(max = if (wide) 480.dp else 380.dp).fillMaxWidth().aspectRatio(1f), corner = 16.dp)
+                Spacer(Modifier.height(20.dp))
+                Column(Modifier.widthIn(max = 560.dp)) { details() }
+            }
+        }
+    }
+}
+
+/** Title, seek bar, transport, source/output lines and the DAC volume. */
+@Composable
+private fun NowPlayingDetails(
+    player: PlayerUi,
+    sourceLabel: String,
+    peak: Float,
+    driver: UsbAudioDriver.State,
+    driverRoute: String,
+    gainLabel: String?,
+    dspOn: Boolean,
+    onDacVolume: (Int) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
         Text(
             player.title.ifBlank { "Nothing playing" }, style = MaterialTheme.typography.headlineSmall,
             fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis,

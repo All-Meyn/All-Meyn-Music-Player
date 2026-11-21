@@ -2,7 +2,6 @@ package com.allmeyn.player.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -43,7 +43,12 @@ fun QueueScreen(player: PlayerUi, onSaveAsPlaylist: (name: String, uris: List<St
     val current = remember(player.queueVersion) { player.currentIndex }
     val currentPos = entries.indexOfFirst { it.index == current }
     val listState = rememberLazyListState()
-    LaunchedEffect(Unit) { if (currentPos > 0) listState.scrollToItem(currentPos) }
+    // Once per visit: coming back after folding or rotating keeps where you had scrolled to.
+    var scrolledToCurrent by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        if (!scrolledToCurrent && currentPos > 0) listState.scrollToItem(currentPos)
+        scrolledToCurrent = true
+    }
 
     fun keyOf(e: PlayerUi.QueueEntry): Any = e.index.toString() + e.uri
     val reorder = rememberReorderState(entries, listState, ::keyOf)
@@ -51,21 +56,19 @@ fun QueueScreen(player: PlayerUi, onSaveAsPlaylist: (name: String, uris: List<St
     val onMove: (Int, Int) -> Unit = { from, to -> player.move(entries[from].index, to) }
 
     if (entries.isEmpty()) {
-        Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("The queue is empty", style = MaterialTheme.typography.titleMedium)
-            Text("Long-press a song and pick \"Add to queue\".", style = MaterialTheme.typography.bodySmall)
-        }
+        EmptyState(PlayerIcons.Queue, "The queue is empty", "Play something, or long-press a song and pick \"Add to queue\".")
         return
     }
 
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        val side = sideInset()
+        Row(Modifier.fillMaxWidth().padding(start = 16.dp + side, end = 8.dp + side), verticalAlignment = Alignment.CenterVertically) {
             val upcoming = if (currentPos >= 0) entries.size - currentPos - 1 else entries.size
             Text(
                 countOf(upcoming, "song") + " up next" + if (player.shuffle) " · shuffled" else "",
                 style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f),
             )
-            var naming by remember { mutableStateOf(false) }
+            var naming by rememberSaveable { mutableStateOf(false) }
             TextButton(onClick = { naming = true }) { Text("Save") }
             if (entries.size > 1) TextButton(onClick = { player.clearUpcoming() }) { Text("Clear others") }
             if (naming) {

@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,7 +27,6 @@ import com.wexpa.liquidglass.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import com.wexpa.liquidglass.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -37,6 +35,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
@@ -55,19 +54,20 @@ val LocalAddToPlaylist = staticCompositionLocalOf<(List<Track>) -> Unit> { {} }
 
 @Composable
 fun PlaylistsList(playlists: List<Playlist>, byUri: Map<String, Track>, onOpen: (Playlist) -> Unit, onCreate: (String) -> Unit) {
-    var naming by remember { mutableStateOf(false) }
+    var naming by rememberSaveable { mutableStateOf(false) }
+    if (naming) NameDialog("New playlist", "", onDismiss = { naming = false }) { naming = false; onCreate(it) }
+    if (playlists.isEmpty()) {
+        EmptyState(
+            PlayerIcons.Playlist, "No playlists yet",
+            "Make one here, long-press a song and pick \"Add to playlist\", or save the queue as one.",
+            action = "New playlist", onAction = { naming = true },
+        )
+        return
+    }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = belowBars(bottom = 8.dp)) {
         item {
             Button(onClick = { naming = true }, modifier = Modifier.padding(16.dp)) {
                 Icon(Icons.Filled.Add, null); Text("New playlist", Modifier.padding(start = 4.dp))
-            }
-        }
-        if (playlists.isEmpty()) {
-            item {
-                Text(
-                    "No playlists yet. Long-press a song and pick \"Add to playlist\", or save the queue as one.",
-                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(horizontal = 16.dp),
-                )
             }
         }
         items(playlists, key = { it.id }) { p ->
@@ -84,7 +84,6 @@ fun PlaylistsList(playlists: List<Playlist>, byUri: Map<String, Track>, onOpen: 
             }
         }
     }
-    if (naming) NameDialog("New playlist", "", onDismiss = { naming = false }) { naming = false; onCreate(it) }
 }
 
 @Composable
@@ -103,24 +102,20 @@ fun PlaylistDetail(
     val tracks = rows.map { it.second }
     val missing = PlaylistOps.resolve(playlist, byUri).second
     var menu by remember { mutableStateOf(false) }
-    var renaming by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf(false) }
+    var renaming by rememberSaveable { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
     val listState = rememberLazyListState()
     // Drag a song by its handle: positions map back to indices in the playlist.
     val reorder = rememberReorderState(rows, listState) { r -> "${r.first}:${r.second.uri}" }
     val moveInPlaylist: (Int, Int) -> Unit = { from, to -> onMove(rows[from].first, rows[to].first) }
     LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = belowBars(bottom = 8.dp)) {
         item {
-            Row(Modifier.padding(start = 16.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(playlist.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    val dur = tracks.sumOf { it.durationMs }
-                    Text(
-                        listOfNotNull(countOf(tracks.size, "song"), formatTime(dur).takeIf { dur > 0 },
-                            if (missing > 0) "$missing not in library" else null).joinToString(" · "),
-                        style = MaterialTheme.typography.bodySmall,
-                    )
-                }
+            val dur = tracks.sumOf { it.durationMs }
+            DetailHeader(
+                tracks.firstNotNullOfOrNull { it.art.takeIf { a -> a.isNotEmpty() } }.orEmpty(), playlist.name, "Playlist",
+                listOfNotNull(countOf(tracks.size, "song"), formatTime(dur).takeIf { dur > 0 },
+                    if (missing > 0) "$missing not in library" else null).joinToString(" · "),
+            ) {
                 Column {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Playlist options") }
                     DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
@@ -129,16 +124,13 @@ fun PlaylistDetail(
                     }
                 }
             }
-            Row(Modifier.padding(16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { player.playTracks(tracks, 0) }, enabled = tracks.isNotEmpty()) {
-                    Icon(PlayerIcons.Play, null); Text("Play", Modifier.padding(start = 4.dp))
-                }
-                OutlinedButton(onClick = { player.shuffleTracks(tracks) }, enabled = tracks.isNotEmpty()) {
-                    Icon(PlayerIcons.Shuffle, null); Text("Shuffle", Modifier.padding(start = 4.dp))
-                }
-            }
+            PlayShuffleRow(tracks, player)
             if (tracks.isEmpty()) {
-                Text("Empty. Long-press any song and pick \"Add to playlist\".", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
+                Text(
+                    "This playlist is empty. Long-press any song and pick \"Add to playlist\".",
+                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(16.dp),
+                )
             }
         }
         itemsIndexed(reorder.rows, key = { _, r -> "${r.first}:${r.second.uri}" }) { pos, row ->
@@ -182,7 +174,7 @@ fun AddToPlaylistDialog(
     onCreate: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var naming by remember { mutableStateOf(false) }
+    var naming by rememberSaveable { mutableStateOf(false) }
     if (naming) {
         NameDialog("New playlist", "", onDismiss = onDismiss) { onCreate(it) }
         return
@@ -213,7 +205,7 @@ fun AddToPlaylistDialog(
 
 @Composable
 fun NameDialog(title: String, initial: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
-    var name by remember { mutableStateOf(initial) }
+    var name by rememberSaveable { mutableStateOf(initial) }
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     AlertDialog(
