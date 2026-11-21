@@ -105,16 +105,14 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
         }
         item(key = "bass") {
             Section(DspProcessor.BASS.label, on = p.enabled && p.bassOn) {
-                LabeledSlider("Amount", "${p.bassPercent.roundToInt()} % (ratio 1:%.2f below 150 Hz)".format(1 + p.bassPercent / 200f),
-                    p.bassPercent, 0f..100f, 1f) { v -> onChange { it.copy(bassPercent = v) } }
+                LabeledSlider("Amount", p.bassLabel, p.bassPercent, 0f..100f, 1f) { v -> onChange { it.copy(bassPercent = v) } }
                 LabeledSlider("Bass Transition", "${p.bassTransitionDb.roundToInt()} dBFS", p.bassTransitionDb, -40f..0f, 1f) { v -> onChange { it.copy(bassTransitionDb = v) } }
                 GainMeter("Bass", meters?.bassDb ?: 0f, -20f, 12f)
             }
         }
         item(key = "impact") {
             Section(DspProcessor.IMPACT.label, on = p.enabled && p.impactOn) {
-                LabeledSlider("Impact", "${p.impactPercent.roundToInt()} % (up to +%.0f dB)".format(p.impactPercent * 0.12f),
-                    p.impactPercent, 0f..100f, 1f) { v -> onChange { it.copy(impactPercent = v) } }
+                LabeledSlider("Impact", p.impactLabel, p.impactPercent, 0f..100f, 1f) { v -> onChange { it.copy(impactPercent = v) } }
                 LabeledSlider("Release", "${p.impactReleaseMs.roundToInt()} ms", p.impactReleaseMs, 25f..1500f, 5f) { v -> onChange { it.copy(impactReleaseMs = v) } }
                 BandMeters(meters?.impactDb, 0f, 12f)
             }

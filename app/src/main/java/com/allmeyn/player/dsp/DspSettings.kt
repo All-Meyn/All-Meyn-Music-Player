@@ -2,6 +2,7 @@ package com.allmeyn.player.dsp
 
 import android.content.Context
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.math.roundToInt
 
 /** The three processors of the chain; [id] matches the native Processor enum. */
 enum class DspProcessor(val id: Int, val label: String) {
@@ -59,6 +60,13 @@ data class DspParams(
     )
 
     fun toNativeOrder() = order.map { it.id }.toIntArray()
+
+    /** "50 % (ratio 1:1.25 below 150 Hz)". (Numbers formatted on their own: a literal "%" in a format string crashes.) */
+    val bassLabel: String get() =
+        "${bassPercent.roundToInt()} % (ratio 1:${"%.2f".format(1f + bassPercent / 100f * 0.5f)} below 150 Hz)"
+
+    /** "50 % (up to +6 dB)". */
+    val impactLabel: String get() = "${impactPercent.roundToInt()} % (up to +${"%.0f".format(impactPercent / 100f * 12f)} dB)"
 
     /** Compression/expansion ratio for display: "1:1.25" (expand) or "1.33:1" (compress). */
     val ratioLabel: String get() {

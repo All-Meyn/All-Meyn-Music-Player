@@ -46,4 +46,12 @@ class DspParamsTest {
         assertArrayEquals(floatArrayOf(5f, 6f, 7f, 8f), m.impactDb, 0f)
         assertEquals(9f, m.outputPeak)
     }
+
+    // These labels once used a format string containing "% (", which crashed the DSP screen.
+    @Test fun labelsFormat() {
+        assertEquals("50 % (ratio 1:1.25 below 150 Hz)", DspParams(bassPercent = 50f).bassLabel)
+        assertEquals("100 % (ratio 1:1.50 below 150 Hz)", DspParams(bassPercent = 100f).bassLabel)
+        assertEquals("50 % (up to +6 dB)", DspParams(impactPercent = 50f).impactLabel)
+        assertEquals("0 % (up to +0 dB)", DspParams(impactPercent = 0f).impactLabel)
+    }
 }
