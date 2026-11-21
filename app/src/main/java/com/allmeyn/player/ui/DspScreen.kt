@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -17,11 +16,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
+import com.wexpa.liquidglass.material3.Card
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
+import com.wexpa.liquidglass.material3.OutlinedButton
+import com.wexpa.liquidglass.material3.Slider
+import com.wexpa.liquidglass.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -63,7 +62,7 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
     // The processor order is the draggable part of the list; everything else is fixed items.
     val reorder = rememberReorderState(p.order, listState) { it.name }
 
-    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = belowBars(16.dp, 16.dp, 16.dp, 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item(key = "master") {
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {

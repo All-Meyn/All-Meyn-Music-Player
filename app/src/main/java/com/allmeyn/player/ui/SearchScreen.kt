@@ -2,7 +2,6 @@ package com.allmeyn.player.ui
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -80,7 +79,7 @@ fun SearchScreen(
             Text("Nothing found", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(16.dp))
         }
         val tracks = results.tracks.take(MAX_TRACKS)
-        LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), contentPadding = belowBars(bottom = 8.dp)) {
             if (results.artists.isNotEmpty()) item { Heading("Artists") }
             items(results.artists, key = { "a:" + it.name.lowercase() }) { a ->
                 ResultRow(

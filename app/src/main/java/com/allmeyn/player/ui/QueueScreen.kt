@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -76,7 +75,7 @@ fun QueueScreen(player: PlayerUi, onSaveAsPlaylist: (name: String, uris: List<St
                 }
             }
         }
-        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 8.dp)) {
+        LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = belowBars(bottom = 8.dp)) {
             itemsIndexed(reorder.rows, key = { _, e -> keyOf(e) }) { pos, e ->
                 val dragging = reorder.isDragging(e)
                 val isCurrent = e.index == current

@@ -7,7 +7,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,14 +21,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.wexpa.liquidglass.material3.AlertDialog
+import com.wexpa.liquidglass.material3.Button
+import com.wexpa.liquidglass.material3.DropdownMenu
+import com.wexpa.liquidglass.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import com.wexpa.liquidglass.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -57,7 +56,7 @@ val LocalAddToPlaylist = staticCompositionLocalOf<(List<Track>) -> Unit> { {} }
 @Composable
 fun PlaylistsList(playlists: List<Playlist>, byUri: Map<String, Track>, onOpen: (Playlist) -> Unit, onCreate: (String) -> Unit) {
     var naming by remember { mutableStateOf(false) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = belowBars(bottom = 8.dp)) {
         item {
             Button(onClick = { naming = true }, modifier = Modifier.padding(16.dp)) {
                 Icon(Icons.Filled.Add, null); Text("New playlist", Modifier.padding(start = 4.dp))
@@ -110,7 +109,7 @@ fun PlaylistDetail(
     // Drag a song by its handle: positions map back to indices in the playlist.
     val reorder = rememberReorderState(rows, listState) { r -> "${r.first}:${r.second.uri}" }
     val moveInPlaylist: (Int, Int) -> Unit = { from, to -> onMove(rows[from].first, rows[to].first) }
-    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 8.dp)) {
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = belowBars(bottom = 8.dp)) {
         item {
             Row(Modifier.padding(start = 16.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {

@@ -16,16 +16,16 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.FilterChip
+import com.wexpa.liquidglass.material3.Button
+import com.wexpa.liquidglass.material3.Card
+import com.wexpa.liquidglass.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
+import com.wexpa.liquidglass.material3.OutlinedButton
+import com.wexpa.liquidglass.material3.Slider
+import com.wexpa.liquidglass.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -73,7 +73,7 @@ fun SettingsScreen(
     peak: Float,
 ) {
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = LocalBottomBarPadding.current).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // ---- Library

@@ -1,12 +1,14 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
+    // AGP 9 has built-in Kotlin: no org.jetbrains.kotlin.android here.
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
 }
 
 android {
     namespace = "com.allmeyn.player"
-    compileSdk = 36
+    compileSdk = 37
     // Pinned: scripts/build-ffmpeg.sh and CI build FFmpeg with the same NDK.
     ndkVersion = "27.0.12077973"
 
@@ -50,7 +52,9 @@ android {
 }
 
 kotlin {
-    jvmToolchain(17)
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_17
+    }
 }
 
 dependencies {
@@ -64,6 +68,8 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    implementation(libs.liquidglass)
+    implementation(libs.liquidglass.material3)
 
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)

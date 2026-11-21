@@ -6,7 +6,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -22,14 +21,14 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.material3.Button
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import com.wexpa.liquidglass.material3.Button
+import com.wexpa.liquidglass.material3.DropdownMenu
+import com.wexpa.liquidglass.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import com.wexpa.liquidglass.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -47,12 +46,13 @@ import com.allmeyn.player.library.FolderNode
 import com.allmeyn.player.library.LibraryIndex
 import com.allmeyn.player.library.Track
 
-private val listPadding = PaddingValues(bottom = 8.dp)
+@Composable
+private fun listPadding() = belowBars(bottom = 8.dp)
 
 @Composable
 fun EmptyLibrary(scanning: Boolean, progress: String, onAddFolder: () -> Unit) {
     Column(
-        Modifier.fillMaxSize().padding(32.dp),
+        Modifier.fillMaxSize().padding(bottom = LocalBottomBarPadding.current).padding(32.dp),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -77,7 +77,7 @@ fun EmptyLibrary(scanning: Boolean, progress: String, onAddFolder: () -> Unit) {
 fun AlbumsGrid(albums: List<Album>, onOpen: (Album) -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(150.dp),
-        contentPadding = PaddingValues(12.dp),
+        contentPadding = belowBars(12.dp, 12.dp, 12.dp, 12.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize(),
@@ -94,7 +94,7 @@ fun AlbumsGrid(albums: List<Album>, onOpen: (Album) -> Unit) {
 
 @Composable
 fun AlbumDetail(album: Album, playingUri: String, player: PlayerUi) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = listPadding) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = listPadding()) {
         item {
             Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                 Artwork(album.art, Modifier.size(140.dp))
@@ -135,7 +135,7 @@ fun AlbumDetail(album: Album, playingUri: String, player: PlayerUi) {
 
 @Composable
 fun ArtistsList(artists: List<Artist>, onOpen: (Artist) -> Unit) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = listPadding) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = listPadding()) {
         items(artists, key = { it.name.lowercase() }) { a ->
             Row(
                 Modifier.fillMaxWidth().clickable { onOpen(a) }.padding(horizontal = 16.dp, vertical = 10.dp),
@@ -167,7 +167,7 @@ fun ArtistDetail(artist: Artist, onOpen: (Album) -> Unit, player: PlayerUi) {
 @Composable
 fun TracksList(tracks: List<Track>, playingUri: String, player: PlayerUi) {
     val sorted = LibraryIndex.tracksByTitle(tracks)
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = listPadding) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = listPadding()) {
         itemsIndexed(sorted, key = { _, t -> t.uri }) { i, t ->
             TrackRow(
                 t, playing = t.uri == playingUri,
@@ -184,7 +184,7 @@ fun FolderBrowser(roots: List<FolderNode>, path: String?, onOpen: (String) -> Un
     val node = path?.let { findFolder(roots, it) }
     val folders = node?.children ?: roots
     val tracks = node?.tracks.orEmpty()
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = listPadding) {
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = listPadding()) {
         if (node != null) {
             item {
                 Text(node.path, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(16.dp, 12.dp))
