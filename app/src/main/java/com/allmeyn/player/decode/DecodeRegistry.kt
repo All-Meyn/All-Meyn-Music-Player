@@ -1,7 +1,9 @@
 package com.allmeyn.player.decode
 
 import android.net.Uri
+import androidx.annotation.OptIn
 import androidx.media3.common.C
+import androidx.media3.common.util.UnstableApi
 import com.allmeyn.player.playback.ReplayGain
 import java.util.concurrent.ConcurrentHashMap
 
@@ -10,6 +12,7 @@ import java.util.concurrent.ConcurrentHashMap
  * (0 = not at all), otherwise as DoP if [dop], otherwise as PCM. [replayGain]: scale PCM output
  * by the file's ReplayGain (only when it's going to an Android output; OFF otherwise).
  */
+@OptIn(UnstableApi::class) // ReplayGain.Mode
 data class DsdOutput(
     val dop: Boolean,
     val nativeMaxRate: Int = 0,
