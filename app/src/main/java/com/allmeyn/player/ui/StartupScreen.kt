@@ -34,6 +34,12 @@ import androidx.compose.ui.graphics.PathMeasure
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Matrix
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.VectorPath
+import androidx.compose.ui.graphics.vector.toPath
+import androidx.compose.ui.res.vectorResource
+import com.allmeyn.player.R
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -57,11 +63,15 @@ fun StartupOverlay() {
     }
 }
 
-/** The startup animation: the AM waveform traces in, then the amber glow and wordmark fade up. */
+/**
+ * The startup animation: the real AM mark (the same vector as the themed icon, ic_brand_mark) is
+ * traced in along its outline, then the copper fill, the amber glow and the wordmark fade up.
+ */
 @Composable
 fun AllMeynStartupScreen(onAnimationFinished: () -> Unit = {}) {
     val traceProgress = remember { Animatable(0f) }
     val glowAlpha = remember { Animatable(0f) }
+    val mark = ImageVector.vectorResource(R.drawable.ic_brand_mark)
 
     LaunchedEffect(Unit) {
         traceProgress.animateTo(
@@ -86,27 +96,29 @@ fun AllMeynStartupScreen(onAnimationFinished: () -> Unit = {}) {
             Spacer(
                 modifier = Modifier
                     .size(180.dp)
-                    // The path, its measure and the brushes are built once per size; each frame only
+                    // The outline, its measure and the brushes are built once per size; each frame only
                     // cuts the traced segment (no allocations per frame).
                     .drawWithCache {
                         val w = size.width
                         val h = size.height
 
-                        // AM waveform + play triangle
-                        val logoPath = Path().apply {
-                            moveTo(w * 0.14f, h * 0.68f)
-                            lineTo(w * 0.30f, h * 0.26f)
-                            lineTo(w * 0.44f, h * 0.66f)
-                            lineTo(w * 0.56f, h * 0.34f)
-                            lineTo(w * 0.66f, h * 0.58f)
-                            // Play triangle tip
-                            lineTo(w * 0.86f, h * 0.48f)
-                            lineTo(w * 0.66f, h * 0.38f)
-                        }
-                        val pathMeasure = PathMeasure().apply { setPath(logoPath, false) }
+                        // The mark's outline, scaled to 86 % of the width and centred.
+                        val outline = Path()
+                        for (node in mark.root) if (node is VectorPath) node.pathData.toPath(outline)
+                        val scale = minOf(w * 0.86f / mark.viewportWidth, h * 0.6f / mark.viewportHeight)
+                        outline.transform(Matrix().apply { scale(scale, scale) })
+                        outline.translate(
+                            Offset((w - mark.viewportWidth * scale) / 2f, (h - mark.viewportHeight * scale) / 2f),
+                        )
+                        val top = (h - mark.viewportHeight * scale) / 2f
+                        val bottom = top + mark.viewportHeight * scale
+
+                        val pathMeasure = PathMeasure().apply { setPath(outline, true) }
                         val animatedPath = Path()
-                        val strokeBrush = Brush.linearGradient(listOf(Color(0xFFFBBF24), Color(0xFFD97706)))
-                        val stroke = Stroke(width = 14.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                        val copper = Brush.verticalGradient(
+                            listOf(Color(0xFFFBBF24), Color(0xFFD97706), Color(0xFF9A4A1A)), startY = top, endY = bottom,
+                        )
+                        val stroke = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
                         val glowBrush = Brush.radialGradient(
                             colors = listOf(Color(0xFFF59E0B).copy(alpha = 0.28f), Color.Transparent),
                             center = Offset(w * 0.5f, h * 0.5f),
@@ -114,9 +126,13 @@ fun AllMeynStartupScreen(onAnimationFinished: () -> Unit = {}) {
                         )
 
                         onDrawBehind {
-                            // Warm amber backlight glow
+                            // Warm amber backlight glow, then the copper fill
                             val glow = glowAlpha.value
-                            if (glow > 0f) drawCircle(brush = glowBrush, alpha = glow)
+                            if (glow > 0f) {
+                                drawCircle(brush = glowBrush, alpha = glow)
+                                drawPath(path = outline, brush = copper, alpha = glow)
+                            }
+                            // The outline being traced
                             animatedPath.reset()
                             pathMeasure.getSegment(
                                 startDistance = 0f,
@@ -124,7 +140,7 @@ fun AllMeynStartupScreen(onAnimationFinished: () -> Unit = {}) {
                                 destination = animatedPath,
                                 startWithMoveTo = true,
                             )
-                            drawPath(path = animatedPath, brush = strokeBrush, style = stroke)
+                            drawPath(path = animatedPath, brush = copper, style = stroke)
                         }
                     },
             )
