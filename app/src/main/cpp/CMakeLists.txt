@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.22.1)
-project(allmeyn_usb C)
+project(allmeyn_usb C CXX)
 
 # ---- libusb (vendored, LGPL-2.1) ----------------------------------------------------------------
 set(LIBUSB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../../../third_party/libusb)
@@ -27,7 +27,9 @@ target_link_libraries(usb1.0 PRIVATE log)
 add_library(allmeyn_usb SHARED
     usb_audio_jni.c usb_audio_engine.c usb_audio_core.c
     decoder/dsd.c decoder/ffdec.c decoder/decoder_jni.c
+    dsp/dsp_chain.cpp dsp/dsp_jni.cpp
 )
+set_source_files_properties(dsp/dsp_chain.cpp dsp/dsp_jni.cpp PROPERTIES COMPILE_OPTIONS "-std=c++17;-O2;-fno-exceptions;-fno-rtti")
 target_link_libraries(allmeyn_usb PRIVATE usb1.0 log m)
 
 # ---- FFmpeg (APE/WavPack), optional: built by scripts/build-ffmpeg.sh --------------------------

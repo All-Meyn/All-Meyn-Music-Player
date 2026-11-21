@@ -19,6 +19,8 @@ import com.allmeyn.player.audio.AllMeynRenderersFactory
 import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.decode.DecodingDataSource
 import com.allmeyn.player.decode.DsdOutput
+import com.allmeyn.player.dsp.DspParams
+import com.allmeyn.player.dsp.DspSettings
 import com.allmeyn.player.usb.UsbAudioDriver
 
 /** Owns the player so music keeps playing in the background with a media notification. */
@@ -48,9 +50,11 @@ class PlaybackService : MediaSessionService() {
             .setMediaSourceFactory(
                 DefaultMediaSourceFactory(
                     DecodingDataSource.Factory(this, DefaultDataSource.Factory(this)) {
+                        // With the DSP on, DSD is decoded to PCM so the DSP can process it.
+                        val dsp = DspSettings.live.processes
                         DsdOutput(
-                            dop = driver.supportsDop,
-                            nativeMaxRate = driver.nativeDsdMaxRate,
+                            dop = driver.supportsDop && !dsp,
+                            nativeMaxRate = if (dsp) 0 else driver.nativeDsdMaxRate,
                             // ReplayGain only for Android output, never through the bit-perfect driver.
                             replayGain = if (driver.isActive) ReplayGain.Mode.OFF else ReplayGain.liveMode,
                         )
@@ -99,6 +103,17 @@ class PlaybackService : MediaSessionService() {
         }
         driver.addListener(listener)
         driverListener = listener
+
+        // DSP switched on/off while DSD plays: re-open it as PCM (DSP on) or native DSD / DoP (off).
+        val dspListener: (DspParams, DspParams) -> Unit = { old, new ->
+            if (old.processes != new.processes) mainHandler.post {
+                val uri = player.currentMediaItem?.localConfiguration?.uri
+                if (uri != null && (DecodeRegistry.isDsd(uri) || looksLikeDsd(uri))) reloadInPlace(player)
+                else DecodeRegistry.resetModes()
+            }
+        }
+        DspSettings.addListener(dspListener)
+        this.dspListener = dspListener
 
         // DSD only plays as DSD through the driver: turn it on when a DSD song starts.
         player.addListener(object : Player.Listener {
@@ -194,7 +209,11 @@ class PlaybackService : MediaSessionService() {
         }
     }
 
+    private var dspListener: ((DspParams, DspParams) -> Unit)? = null
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+
     override fun onDestroy() {
+        dspListener?.let { DspSettings.removeListener(it) }
         replayGainPrefListener?.let { ReplayGain.prefs(this).unregisterOnSharedPreferenceChangeListener(it) }
         val driver = (application as AllMeynApp).usbDriver
         driverListener?.let { driver.removeListener(it) }

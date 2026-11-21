@@ -32,6 +32,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -70,6 +71,7 @@ import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.library.Track
 import com.allmeyn.player.playback.PlaybackService
 import com.allmeyn.player.playback.ReplayGain
+import com.allmeyn.player.dsp.DspSettings
 import com.allmeyn.player.usb.UsbAudioDriver
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.delay
@@ -141,6 +143,7 @@ private sealed interface Route {
     data object NowPlayingRoute : Route
     data object QueueRoute : Route
     data object SearchRoute : Route
+    data object DspRoute : Route
     data object SettingsRoute : Route
 }
 
@@ -176,6 +179,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     var driverStatus by remember { mutableStateOf("") }
     var gainLabel by remember { mutableStateOf<String?>(null) }
     var replayGainMode by remember { mutableStateOf(ReplayGain.mode(app)) }
+    var dspParams by remember { mutableStateOf(DspSettings.live) }
     LaunchedEffect(Unit) {
         while (true) {
             peak = app.levelMeter.peak
@@ -226,6 +230,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                             Route.NowPlayingRoute -> "Now playing"
                             Route.QueueRoute -> "Queue"
                             Route.SearchRoute -> "Search"
+                            Route.DspRoute -> "DSP"
                             Route.SettingsRoute -> "Settings"
                             null -> "All-Meyn"
                         },
@@ -244,6 +249,9 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         IconButton(onClick = { stack.add(Route.SearchRoute) }) { Icon(Icons.Filled.Search, "Search") }
                     }
                     if (top == Route.NowPlayingRoute) {
+                        IconButton(onClick = { stack.add(Route.DspRoute) }) {
+                            Icon(PlayerIcons.Tune, "DSP", tint = if (dspParams.processes) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+                        }
                         IconButton(onClick = { stack.add(Route.QueueRoute) }) { Icon(PlayerIcons.Queue, "Queue") }
                     }
                     if (top != Route.SettingsRoute) {
@@ -317,7 +325,11 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         onOpenAlbum = { stack.add(Route.AlbumRoute(it.key)) },
                         onOpenArtist = { stack.add(Route.ArtistRoute(it.name)) },
                     )
-                    Route.NowPlayingRoute -> NowPlaying(player, sourceLabel, peak, driver, route, gainLabel, app.usbDriver::setVolumeStep)
+                    Route.NowPlayingRoute -> NowPlaying(player, sourceLabel, peak, driver, route, gainLabel, dspParams.processes, app.usbDriver::setVolumeStep)
+                    Route.DspRoute -> DspScreen(dspParams) { change ->
+                        DspSettings.update(app, change)
+                        dspParams = DspSettings.live
+                    }
                     Route.SettingsRoute -> SettingsScreen(
                         library = library,
                         folderLabel = app.library::folderLabel,
@@ -333,6 +345,8 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         onAutoForDsd = { app.usbDriver.autoEnableForDsd = it },
                         replayGain = replayGainMode,
                         onReplayGain = { replayGainMode = it; ReplayGain.setMode(app, it) },
+                        dspOn = dspParams.processes,
+                        onOpenDsp = { stack.add(Route.DspRoute) },
                         onProbe = { cb -> app.usbDriver.probe(cb) },
                         onTone = { rate, bits -> player.pause(); app.usbDriver.startTone(rate, bits) {} },
                         pluginName = app.levelMeter.name,
