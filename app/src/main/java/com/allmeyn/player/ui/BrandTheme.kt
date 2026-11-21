@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -79,6 +80,7 @@ val MusicFolderUri = DocumentsContract.buildDocumentUri("com.android.externalsto
  * Shown before Android's own folder picker (a system screen apps can't restyle): what it is and
  * what to do there, in our style, so the switch is expected.
  */
+@OptIn(ExperimentalMaterial3Api::class) // the glass sheet mirrors Material 3's experimental sheet API
 @Composable
 fun ChooseFolderSheet(onContinue: () -> Unit, onDismiss: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
