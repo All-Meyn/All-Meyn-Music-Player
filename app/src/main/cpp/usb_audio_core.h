@@ -19,6 +19,24 @@ enum {
     IN_DSD_NATIVE = 5,
 };
 
+/**
+ * Decides which short packets are real dropouts. A packet the ring couldn't fill is only an
+ * underrun if audio was flowing (a full packet since the last start / seek / pause), and each gap
+ * counts once until audio flows again. Stream starts, seeks, pauses and the drain at the end of
+ * the queue (after underrun_end_of_stream) don't count.
+ */
+typedef struct {
+    atomic_int armed;     // audio has been flowing since the last (re)start (USB event thread)
+    atomic_int draining;  // end of stream announced: running dry is expected
+} UnderrunState;
+
+/** Call for every packet while playing music; returns 1 if this packet is a new dropout. */
+int underrun_note(UnderrunState *s, int packet_full);
+/** Start, seek, flush, pause, or new data after the end of stream: wait for audio to flow again. */
+void underrun_restart(UnderrunState *s);
+/** The player is playing out the last of the queue. */
+void underrun_end_of_stream(UnderrunState *s);
+
 /** DSD idle pattern: what a DAC in native DSD mode gets when there is nothing to play. */
 #define DSD_IDLE_BYTE 0x69
 

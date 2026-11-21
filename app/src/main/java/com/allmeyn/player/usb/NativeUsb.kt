@@ -47,6 +47,9 @@ object NativeUsb {
     /** Drops queued audio and resets the played-frame counter to 0 (stays claimed and streaming). */
     @JvmStatic external fun flush()
 
+    /** The player is playing out the end of the queue (the ring running dry isn't a dropout). */
+    @JvmStatic external fun endOfStream()
+
     /** Frames of queued audio that have been sent to the DAC since the last flush/configure. */
     @JvmStatic external fun playedFrames(): Long
 

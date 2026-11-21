@@ -134,3 +134,22 @@ uint32_t ring_read(Ring *r, uint8_t *dst, uint32_t frames) {
     if (!atomic_compare_exchange_strong(&r->read_pos, &expected, rd + frames)) return 0;
     return frames;
 }
+
+int underrun_note(UnderrunState *s, int packet_full) {
+    if (packet_full) {
+        if (!atomic_load(&s->draining)) atomic_store(&s->armed, 1);
+        return 0;
+    }
+    if (!atomic_load(&s->armed) || atomic_load(&s->draining)) return 0;
+    atomic_store(&s->armed, 0);  // one count per gap
+    return 1;
+}
+
+void underrun_restart(UnderrunState *s) {
+    atomic_store(&s->armed, 0);
+    atomic_store(&s->draining, 0);
+}
+
+void underrun_end_of_stream(UnderrunState *s) {
+    atomic_store(&s->draining, 1);
+}
