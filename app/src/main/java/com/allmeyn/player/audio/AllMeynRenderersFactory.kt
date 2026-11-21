@@ -10,7 +10,8 @@ import com.allmeyn.player.usb.UsbAudioOutputProvider
 import com.allmeyn.player.usb.UsbDacManager
 
 /**
- * - Prefers the FFmpeg audio decoder (FLAC, ALAC, Opus, Vorbis, MP3, AAC, AC-3, DTS, TrueHD, ...)
+ * - Prefers the FFmpeg audio decoder (FLAC, ALAC, MP3, AAC, AC-3, E-AC-3, DTS, TrueHD; built on the
+ *   app's own FFmpeg, see cpp/media3_ffmpeg)
  *   over the phone's MediaCodec, so decoding is consistent across devices and high-res isn't
  *   silently truncated by vendor decoders. Falls back to MediaCodec for anything FFmpeg can't do.
  * - Wraps the audio sink with [CaptureAudioSink] so plugins see every buffer before output.

@@ -44,6 +44,7 @@ typedef struct {
     uint8_t *pend;  // decoded, converted, not yet returned
     int pend_frames, pend_off, pend_cap;
     int64_t next_index;  // frame index of the next decoded sample if pts is missing
+    int open_fmt;        // the sample format every frame must keep (see decode_more)
     int64_t skip_until;  // drop decoded frames before this index (after a seek)
     int draining, done;
 } Ff;
@@ -135,6 +136,13 @@ static int decode_more(Ff *f) {
     while (!f->done) {
         int rc = avcodec_receive_frame(f->cc, f->frame);
         if (rc == 0) {
+            // append() reads [channels] planes/samples in the format the file opened with. A
+            // stream that changes either mid-way (WavPack allows it; a damaged file can fake it)
+            // would make it read past the frame's buffers: stop instead.
+            if (f->frame->ch_layout.nb_channels != f->base.info.channels || f->frame->format != f->open_fmt) {
+                av_frame_unref(f->frame);
+                return AVERROR_INVALIDDATA;
+            }
             int64_t start = f->frame->pts != AV_NOPTS_VALUE
                 ? av_rescale_q(f->frame->pts, f->tb, (AVRational) {1, f->base.info.sample_rate})
                 : f->next_index;
@@ -288,12 +296,13 @@ Decoder *ff_open(int fd, char *err, int err_len) {
             goto fail;
     }
     f->out_bytes = dec_sample_bytes(in->format);
+    f->open_fmt = f->cc->sample_fmt;
     if (s->duration != AV_NOPTS_VALUE && s->duration > 0) {
         in->total_frames = av_rescale_q(s->duration, f->tb, (AVRational) {1, in->sample_rate});
     } else if (f->fmt->duration > 0) {
         in->total_frames = av_rescale(f->fmt->duration, in->sample_rate, AV_TIME_BASE);
     }
-    if (in->sample_rate <= 0 || in->channels <= 0 || in->total_frames <= 0) {
+    if (in->sample_rate <= 0 || in->channels <= 0 || in->channels > 8 || in->total_frames <= 0) {
         snprintf(err, err_len, "%s: missing rate/channels/length", is_ape ? "APE" : "WavPack");
         goto fail;
     }

@@ -67,4 +67,15 @@ class ApeTagTest {
         val r = ApeTag.parse(bad)
         assertEquals(0, r.text.size)
     }
+
+    @Test fun hugeValueSizeIsRejectedNotWrapped() {
+        // A damaged item claims Int.MAX_VALUE - 4 bytes: k + 1 + size used to wrap negative and
+        // pass the bounds check (then throw). It must just end parsing, keeping earlier items.
+        val good = item("Title", "Ok".toByteArray(), false)
+        val bad = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putInt(Int.MAX_VALUE - 4).putInt(0).array() +
+            "Artist".toByteArray(Charsets.US_ASCII) + 0 + "x".toByteArray()
+        val r = ApeTag.parse(tag(listOf(good, bad)))
+        assertEquals("Ok", r.text["title"])
+        assertNull(r.text["artist"])
+    }
 }

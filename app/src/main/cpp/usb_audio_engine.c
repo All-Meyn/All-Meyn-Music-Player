@@ -378,8 +378,17 @@ JNI_FN(configure)(JNIEnv *env, jclass clazz, jint alt, jint max_packet, jint sub
     char msg[200];
     pthread_mutex_lock(&g_lock);
     Engine *e = g;
+    // These come from the DAC's descriptors: a faulty (or hostile) device must not be able to
+    // make the stream divide by zero or size its buffers from nonsense.
+    int sane = (subslot >= 2 && subslot <= 4) && out_channels >= 1 && out_channels <= 8 &&
+               max_packet >= subslot * out_channels && max_packet <= 3 * 1024 &&
+               rate >= 8000 && rate <= 1536000 && in_channels >= 1 && in_channels <= 8 &&
+               ring_ms >= 10 && ring_ms <= 2000;
     if (!e) {
         snprintf(msg, sizeof(msg), "ERROR driver not open");
+    } else if (!sane) {
+        snprintf(msg, sizeof(msg), "ERROR unsupported stream (%d ch, %d-byte slots, %d Hz, packet %d)",
+                 out_channels, subslot, rate, max_packet);
     } else if (atomic_load(&e->dead)) {
         snprintf(msg, sizeof(msg), "ERROR DAC disconnected");
     } else {
@@ -417,7 +426,9 @@ JNI_FN(write)(JNIEnv *env, jclass clazz, jobject buffer, jint offset, jint lengt
     pthread_mutex_lock(&g_lock);
     Engine *e = g;
     uint8_t *base = (uint8_t *) (*env)->GetDirectBufferAddress(env, buffer);
-    if (!e || !e->streaming || atomic_load(&e->dead) || !base) {
+    jlong cap = base ? (*env)->GetDirectBufferCapacity(env, buffer) : 0;
+    if (!e || !e->streaming || atomic_load(&e->dead) || !base ||
+        offset < 0 || length < 0 || (jlong) offset + length > cap) {
         result = -1;
     } else {
         result = (jint) ring_write_converted(&e->ring, base + offset, (size_t) length, e->in_format,

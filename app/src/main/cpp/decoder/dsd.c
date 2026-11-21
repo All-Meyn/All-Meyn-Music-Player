@@ -16,9 +16,11 @@
 #include "decoder.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #define DSD_SILENCE 0x69  // balanced idle pattern
@@ -263,6 +265,11 @@ static int build_filter(Dsd *d) {
     return 0;
 }
 
+// Limits for values read from files: anything outside is a damaged (or hostile) file.
+#define MAX_DSD_RATE (2822400u * 16)  // DSD1024
+#define MAX_DSF_BLOCK (1 << 20)       // real files use 4096
+#define MAX_DFF_CHUNKS 4096
+
 static int parse_dsf(Dsd *d, char *err, int err_len) {
     uint8_t h[92];
     if (read_at(d->fd, h, sizeof h, 0)) return -1;
@@ -276,6 +283,10 @@ static int parse_dsf(Dsd *d, char *err, int err_len) {
     uint64_t samples = le64(h + 64);
     d->block = (int) le32(h + 72);
     uint64_t fmt_size = le64(h + 32);
+    if (fmt_size < 52 || fmt_size > 4096) {
+        snprintf(err, err_len, "DSF: bad fmt chunk");
+        return -1;
+    }
     int64_t data_hdr = 28 + (int64_t) fmt_size;
     uint8_t dh[12];
     if (read_at(d->fd, dh, sizeof dh, data_hdr) || memcmp(dh, "data", 4)) {
@@ -285,7 +296,7 @@ static int parse_dsf(Dsd *d, char *err, int err_len) {
     d->data_start = data_hdr + 12;
     d->lsb_first = bits == 1;
     d->bytes_per_ch = (int64_t) (samples / 8);
-    if (d->block <= 0 || (bits != 1 && bits != 8)) {
+    if (d->block <= 0 || d->block > MAX_DSF_BLOCK || (bits != 1 && bits != 8)) {
         snprintf(err, err_len, "DSF: bad block/bit settings");
         return -1;
     }
@@ -295,20 +306,33 @@ static int parse_dsf(Dsd *d, char *err, int err_len) {
 static int parse_dff(Dsd *d, char *err, int err_len) {
     uint8_t h[16];
     if (read_at(d->fd, h, sizeof h, 0) || memcmp(h + 12, "DSD ", 4)) return -1;
-    int64_t end = 12 + (int64_t) be64(h + 4);
+    // Sizes come from the file: negative or absurd ones end the walk (a negative size could
+    // otherwise send it backwards forever), every step moves forwards, and a chunk running past
+    // the end of the file (a truncated download) is cut to what is there.
+    struct stat st;
+    int64_t fsize = fstat(d->fd, &st) == 0 ? (int64_t) st.st_size : INT64_MAX / 2;
+    uint64_t form = be64(h + 4);
+    if (form > INT64_MAX / 2) return -1;
+    int64_t end = 12 + (int64_t) form;
     int64_t pos = 16;
     int have_data = 0;
-    while (pos + 12 <= end && !have_data) {
+    for (int chunks = 0; pos + 12 <= end && !have_data && chunks < MAX_DFF_CHUNKS; chunks++) {
         uint8_t ch[12];
         if (read_at(d->fd, ch, sizeof ch, pos)) break;
-        int64_t size = (int64_t) be64(ch + 4);
+        uint64_t usize = be64(ch + 4);
+        if (usize > INT64_MAX / 4) break;
+        int64_t size = (int64_t) usize;
         int64_t body = pos + 12;
+        if (body + size > fsize) size = fsize - body;
+        if (size < 0) break;
         if (!memcmp(ch, "PROP", 4)) {
             int64_t p = body + 4;  // skip "SND "
-            while (p + 12 <= body + size) {
+            for (int props = 0; p + 12 <= body + size && props < MAX_DFF_CHUNKS; props++) {
                 uint8_t sc[16];
                 if (read_at(d->fd, sc, 16, p)) break;
-                int64_t ssize = (int64_t) be64(sc + 4);
+                uint64_t ussize = be64(sc + 4);
+                if (ussize > INT64_MAX / 4) break;
+                int64_t ssize = (int64_t) ussize;
                 if (!memcmp(sc, "FS  ", 4)) d->dsd_rate = be32(sc + 12);
                 else if (!memcmp(sc, "CHNL", 4)) d->channels = (sc[12] << 8) | sc[13];
                 else if (!memcmp(sc, "CMPR", 4) && memcmp(sc + 12, "DSD ", 4)) {
@@ -355,7 +379,7 @@ Decoder *dsd_open(int fd, int dop, uint32_t native_max_rate, char *err, int err_
         snprintf(err, err_len, "DSD: %d channels not supported (1-2)", d->channels);
         rc = -1;
     }
-    if (rc == 0 && (d->dsd_rate < 2822400 || (d->dsd_rate % 44100 && d->dsd_rate % 48000))) {
+    if (rc == 0 && (d->dsd_rate < 2822400 || d->dsd_rate > MAX_DSD_RATE || (d->dsd_rate % 44100 && d->dsd_rate % 48000))) {
         snprintf(err, err_len, "DSD: unsupported rate %u", d->dsd_rate);
         rc = -1;
     }

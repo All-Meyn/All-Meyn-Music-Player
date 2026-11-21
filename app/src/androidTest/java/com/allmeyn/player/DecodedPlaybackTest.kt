@@ -49,16 +49,73 @@ class DecodedPlaybackTest {
     private val app = context.applicationContext as AllMeynApp
     private val main = Handler(Looper.getMainLooper())
 
-    @Test fun dsfAsPcm() = play(dsdFile("t.dsf", dff = false), dop = false, rate = 176_400, encoding = C.ENCODING_PCM_FLOAT)
+    @Test fun dsfAsPcm() { play(dsdFile("t.dsf", dff = false), dop = false, rate = 176_400, encoding = C.ENCODING_PCM_FLOAT) }
 
-    @Test fun dffAsPcm() = play(dsdFile("t.dff", dff = true), dop = false, rate = 176_400, encoding = C.ENCODING_PCM_FLOAT)
+    @Test fun dffAsPcm() { play(dsdFile("t.dff", dff = true), dop = false, rate = 176_400, encoding = C.ENCODING_PCM_FLOAT) }
 
     /** DoP to an Android output is muted by DopGuardOutput, but the pipeline must still run. */
-    @Test fun dsfAsDop() = play(dsdFile("t2.dsf", dff = false), dop = true, rate = 176_400, encoding = C.ENCODING_PCM_24BIT)
+    @Test fun dsfAsDop() { play(dsdFile("t2.dsf", dff = false), dop = true, rate = 176_400, encoding = C.ENCODING_PCM_24BIT) }
 
-    @Test fun ape16() = play(asset("clip16.ape"), dop = false, rate = 44_100, encoding = C.ENCODING_PCM_16BIT)
+    @Test fun ape16() { play(asset("clip16.ape"), dop = false, rate = 44_100, encoding = C.ENCODING_PCM_16BIT) }
 
-    @Test fun wavPack24() = play(asset("clip24.wv"), dop = false, rate = 44_100, encoding = C.ENCODING_PCM_24BIT)
+    @Test fun wavPack24() { play(asset("clip24.wv"), dop = false, rate = 44_100, encoding = C.ENCODING_PCM_24BIT) }
+
+    // ---- Media3's FFmpeg decoder, built on our FFmpeg (replaces the Jellyfin prebuilt) ----------
+    // The clips are 2 s generated signals (see FFMPEG_CLIP_HASHES); lossless ones must decode to
+    // exactly the samples they were made from.
+
+    @Test fun flac16BitExact() = playFfmpeg("clip16.flac", "flac", bits = 16)
+    @Test fun flac24BitExact() = playFfmpeg("clip24.flac", "flac", bits = 24)
+    @Test fun alac24BitExact() = playFfmpeg("clip24.m4a", "alac", bits = 24)
+    @Test fun mp3ThroughFfmpeg() = playFfmpeg("clip.mp3", "mp3", bits = 0)
+    @Test fun aacThroughFfmpeg() = playFfmpeg("clip.m4a", "aac", bits = 0)
+
+    /**
+     * Plays [name] and checks it was decoded by our FFmpeg build (the decoder's name carries the
+     * FFmpeg version) and, for lossless clips ([bits] > 0), that the first 11025 frames are exactly
+     * the generated samples (SHA-256 of them as little-endian int32, per [FFMPEG_CLIP_HASHES]).
+     */
+    private fun playFfmpeg(name: String, codec: String, bits: Int) {
+        assertTrue("FFmpeg decoder library not available", androidx.media3.decoder.ffmpeg.FfmpegLibrary.isAvailable())
+        val version = androidx.media3.decoder.ffmpeg.FfmpegLibrary.getVersion().orEmpty()
+        // libavcodec 61 = FFmpeg 7.x (the old Jellyfin build was FFmpeg 6.0 = libavcodec 60).
+        assertTrue("FFmpeg version '$version' isn't our 7.1 build", version.startsWith("Lavc61."))
+        val captured = java.io.ByteArrayOutputStream()
+        var encoding = -1
+        val want = 11025 * 2 // frames x channels
+        val tap = object : AudioCapturePlugin {
+            override val name = "ffmpeg tap"
+            override fun onConfigure(format: com.allmeyn.player.plugin.PcmFormat) { encoding = format.encoding }
+            override fun onBuffer(buffer: ByteBuffer, presentationTimeUs: Long) {
+                if (captured.size() < want * 4) {
+                    val b = ByteArray(buffer.remaining()); buffer.get(b); captured.write(b)
+                }
+            }
+        }
+        PluginHost.register(tap)
+        val decoder: String
+        try {
+            decoder = play(asset(name), dop = false, rate = 44_100, encoding = null)
+        } finally {
+            PluginHost.unregister(tap)
+        }
+        assertTrue("$name: decoded by '$decoder', not our FFmpeg", decoder.startsWith("ffmpeg") && decoder.contains(version) && decoder.endsWith("-$codec"))
+        if (bits == 0) return
+
+        val bb = ByteBuffer.wrap(captured.toByteArray()).order(ByteOrder.LITTLE_ENDIAN)
+        val out = ByteBuffer.allocate(want * 4).order(ByteOrder.LITTLE_ENDIAN)
+        for (i in 0 until want) {
+            val v = when (encoding) {
+                C.ENCODING_PCM_FLOAT -> Math.round(bb.float.toDouble() * (1 shl (bits - 1))).toInt()
+                C.ENCODING_PCM_16BIT -> bb.short.toInt() shl (bits - 16)
+                C.ENCODING_PCM_32BIT -> bb.int shr (32 - bits)
+                else -> throw AssertionError("$name: unexpected encoding $encoding")
+            }
+            out.putInt(v)
+        }
+        val hash = java.security.MessageDigest.getInstance("SHA-256").digest(out.array()).joinToString("") { "%02x".format(it) }
+        assertEquals("$name: decoded samples differ from the source", FFMPEG_CLIP_HASHES[bits], hash)
+    }
 
     /** DSP on: integer audio (converted to float for the chain) and float audio (in place). */
     @Test fun dspOnIntegerAndFloatAudio() {
@@ -106,11 +163,13 @@ class DecodedPlaybackTest {
         }
     }
 
+    /** Plays [file] through the app's pipeline and checks it; returns the audio decoder's name. */
     private fun play(
-        file: File, dop: Boolean, rate: Int, encoding: Int, nativeMaxRate: Int = 0, channels: Int = 2,
+        file: File, dop: Boolean, rate: Int, encoding: Int?, nativeMaxRate: Int = 0, channels: Int = 2,
         expectDsp: Boolean = false,
-    ) {
+    ): String {
         lateinit var player: ExoPlayer
+        var decoderName = ""
         val ready = CountDownLatch(1)
         var error: PlaybackException? = null
         sync {
@@ -131,6 +190,12 @@ class DecodedPlaybackTest {
                     ready.countDown()
                 }
             })
+            player.addAnalyticsListener(object : androidx.media3.exoplayer.analytics.AnalyticsListener {
+                override fun onAudioDecoderInitialized(
+                    eventTime: androidx.media3.exoplayer.analytics.AnalyticsListener.EventTime,
+                    name: String, initializedTimestampMs: Long, initializationDurationMs: Long,
+                ) { decoderName = name }
+            })
             player.setMediaItem(MediaItem.fromUri(Uri.fromFile(file)))
             player.prepare()
         }
@@ -140,7 +205,7 @@ class DecodedPlaybackTest {
             var format: androidx.media3.common.Format? = null
             sync { format = player.audioFormat }
             assertEquals("${file.name} sample rate", rate, format?.sampleRate)
-            assertEquals("${file.name} encoding", encoding, format?.pcmEncoding)
+            if (encoding != null) assertEquals("${file.name} encoding", encoding, format?.pcmEncoding)
             assertEquals("${file.name} channels", channels, format?.channelCount)
             assertEquals(dop && nativeMaxRate == 0, DecodeRegistry.dopActive)
             assertEquals(nativeMaxRate > 0, DecodeRegistry.nativeActive)
@@ -173,6 +238,7 @@ class DecodedPlaybackTest {
         } finally {
             sync { player.release() }
         }
+        return decoderName
     }
 
     private fun sync(block: () -> Unit) {
@@ -248,5 +314,18 @@ class DecodedPlaybackTest {
             }
         }
         return out
+    }
+
+    companion object {
+        /**
+         * SHA-256 of the first 11025 frames of each generated clip, as little-endian int32 samples
+         * (L, R, L, R ...), by bit depth. Made with the clips: 2 s, 44.1 kHz stereo; left = 1 kHz +
+         * 5123 Hz sines, right = 440 Hz - 7001 Hz sines; 24-bit adds a small pattern in the lowest
+         * bits so truncation to 16 bits would show.
+         */
+        val FFMPEG_CLIP_HASHES = mapOf(
+            16 to "66d032bd03069e0b2fb00bd8fba8c9939ae12ee2439b0f46c9eda9b9cc962055",
+            24 to "f808974ebd2ed8a3a424dd6242551324ae0d5d6a4fd83bf20ea015a7e5d9d3b6",
+        )
     }
 }

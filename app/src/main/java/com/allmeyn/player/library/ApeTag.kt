@@ -48,7 +48,8 @@ object ApeTag {
             val flags = b.int
             var k = p + 8
             while (k < end && block[k] != 0.toByte()) k++
-            if (k >= end || valueSize < 0 || k + 1 + valueSize > end) return Result(text, cover)
+            // Long: a huge size from a damaged file must not wrap around and pass the check.
+            if (k >= end || valueSize < 0 || k + 1L + valueSize > end) return Result(text, cover)
             val key = String(block, p + 8, k - (p + 8), Charsets.US_ASCII).lowercase()
             val vStart = k + 1
             val isBinary = (flags shr 1) and 0x3 == 1
