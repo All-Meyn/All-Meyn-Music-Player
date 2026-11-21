@@ -75,10 +75,13 @@ jobs:
             for name in "FLAC (Free Lossless Audio Codec)" "ALAC (Apple Lossless Audio Codec)" "MP3 (MPEG audio layer 3)" "AAC (Advanced Audio Coding)"; do
               grep -qa "$name" "$JNI" || { echo "$abi: '$name' missing from libffmpegJNI.so"; exit 1; }
             done
-            # Ours, not the old Jellyfin prebuilt (same file name, FFmpeg 6.0): the version string.
-            WANT="$(sed -n 's/^FFMPEG_TAG="n\([^"]*\)".*/\1/p' scripts/build-ffmpeg.sh)"  # e.g. 7.1.5
-            grep -qa "$WANT" "$JNI" || { echo "$abi: libffmpegJNI.so isn't FFmpeg $WANT"; exit 1; }
-            echo "$abi: Media3 FFmpeg decoder linked, FFmpeg $WANT ($(stat -c %s "$JNI") bytes)"
+            # Ours, not the old Jellyfin prebuilt (same file name; FFmpeg 6.0 = Lavc60): the decoder
+            # reports libavcodec's ident, which must match the FFmpeg we just built.
+            H="app/src/main/cpp/ffmpeg/$abi/include/libavcodec"
+            V() { sed -n "s/^#define LIBAVCODEC_VERSION_$1 *\([0-9]*\).*/\1/p" "$H"/version*.h; }
+            WANT="Lavc$(V MAJOR).$(V MINOR).$(V MICRO)"
+            grep -qa "$WANT" "$JNI" || { echo "$abi: libffmpegJNI.so isn't $WANT"; exit 1; }
+            echo "$abi: Media3 FFmpeg decoder linked, $WANT ($(stat -c %s "$JNI") bytes)"
           done
 
       - uses: actions/upload-artifact@v6

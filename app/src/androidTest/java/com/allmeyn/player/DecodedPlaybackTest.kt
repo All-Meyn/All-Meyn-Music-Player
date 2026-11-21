@@ -78,7 +78,8 @@ class DecodedPlaybackTest {
     private fun playFfmpeg(name: String, codec: String, bits: Int) {
         assertTrue("FFmpeg decoder library not available", androidx.media3.decoder.ffmpeg.FfmpegLibrary.isAvailable())
         val version = androidx.media3.decoder.ffmpeg.FfmpegLibrary.getVersion().orEmpty()
-        assertTrue("FFmpeg version '$version' isn't our 7.1 build", version.contains("7.1."))
+        // libavcodec 61 = FFmpeg 7.x (the old Jellyfin build was FFmpeg 6.0 = libavcodec 60).
+        assertTrue("FFmpeg version '$version' isn't our 7.1 build", version.startsWith("Lavc61."))
         val captured = java.io.ByteArrayOutputStream()
         var encoding = -1
         val want = 11025 * 2 // frames x channels
