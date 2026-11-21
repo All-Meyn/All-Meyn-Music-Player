@@ -83,6 +83,8 @@ class ReplayGainTest {
         val b = le(1000, 1000, 1000)
         b.position(2); b.limit(4)
         ReplayGain.scale(b, C.ENCODING_PCM_16BIT, 0.5f)
+        assertEquals(2, b.position()); assertEquals(4, b.limit())
+        b.clear() // read all three samples back
         assertEquals(listOf(1000, 500, 1000), (0 until 3).map { b.getShort(it * 2).toInt() })
         val c = le(1000)
         ReplayGain.scale(c, C.ENCODING_PCM_16BIT, 1f)
