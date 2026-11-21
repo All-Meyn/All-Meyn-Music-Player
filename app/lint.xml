@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Vendored, unmodified Media3 code (cpp/media3_ffmpeg/README.vendored): Google lints it with
+         its own setup (e.g. its @UnstableApi use needs no opt-in inside Media3). Our code is
+         still checked in full. -->
+    <issue id="all">
+        <ignore path="src/main/java/androidx/media3/decoder/ffmpeg/**" />
+        <ignore path="src/main/java/androidx/media3/decoder/ffmpeg/*.java" />
+    </issue>
+</lint>
