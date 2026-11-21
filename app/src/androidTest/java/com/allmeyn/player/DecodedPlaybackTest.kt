@@ -146,9 +146,15 @@ class DecodedPlaybackTest {
             assertEquals(nativeMaxRate > 0, DecodeRegistry.nativeActive)
 
             sync { player.play() }
-            Thread.sleep(1200)
+            // Wait for playback to get going: a cold emulator can take a while to start the first
+            // track (one CI run reached only 377 ms after 1.2 s), so poll instead of a fixed sleep.
             var pos = 0L
-            sync { pos = player.currentPosition; assertNull(player.playerError) }
+            val deadline = System.currentTimeMillis() + 5000
+            while (true) {
+                Thread.sleep(200)
+                sync { pos = player.currentPosition; assertNull(player.playerError) }
+                if (pos > 400 || System.currentTimeMillis() > deadline) break
+            }
             assertTrue("${file.name}: position didn't advance ($pos ms)", pos > 400)
             if (expectDsp) {
                 val m = DspSettings.meters
