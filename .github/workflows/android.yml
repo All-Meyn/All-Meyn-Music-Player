@@ -5,6 +5,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Least privilege: the build only reads the repository (artifacts and caches use their own tokens).
+permissions:
+  contents: read
+
 env:
   # Must match android.ndkVersion in app/build.gradle.kts (FFmpeg and the app share it).
   NDK_VERSION: 27.0.12077973

@@ -8,7 +8,7 @@
 set -euo pipefail
 
 NDK="${1:?usage: build-ffmpeg.sh <android-ndk-dir> [ffmpeg-source-dir]}"
-FFMPEG_TAG="n7.1"
+FFMPEG_TAG="n7.1.5"  # latest 7.1 maintenance release (security fixes); bump with each point release
 API=26
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_ROOT="$ROOT/app/src/main/cpp/ffmpeg"

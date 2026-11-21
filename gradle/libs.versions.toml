@@ -7,7 +7,9 @@ activityCompose = "1.10.1"
 lifecycle = "2.9.1"
 composeBom = "2026.04.01"
 # Media3 and the FFmpeg decoder MUST share the same base version.
-media3 = "1.9.0"
+# 1.9.x patch releases stay compatible with the decoder built on 1.9.0; 1.9.1 hardened session
+# Bundles sent by other apps.
+media3 = "1.9.3"
 media3Ffmpeg = "1.9.0+1"
 liquidglass = "1.0.0"
 junit = "4.13.2"

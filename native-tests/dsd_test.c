@@ -254,6 +254,68 @@ static void check_file(const char *path, const char *name) {
     free(pcm); free(seg); free(dop);
 }
 
+
+/** Damaged or hostile headers: each must be refused (or opened safely) quickly, never hang. */
+static Decoder *open_path(const char *path, char *err, int n) {
+    int fd = open(path, O_RDONLY);
+    Decoder *d = dsd_open(fd, 0, 0, err, n);
+    close(fd);
+    return d;
+}
+
+static void check_hostile_headers(void) {
+    alarm(10);  // a parser that loops forever fails the test instead of hanging CI
+    const char *p = "/tmp/allmeyn-native-tests/bad.dsd";
+    char err[128];
+    FILE *f;
+
+    // DFF: a chunk size of -12 used to send the chunk walk back to the same spot forever.
+    f = fopen(p, "wb");
+    fwrite("FRM8", 1, 4, f); put64be(f, 1000); fwrite("DSD ", 1, 4, f);
+    fwrite("FVER", 1, 4, f); put64be(f, (uint64_t) -12); put32be(f, 0);
+    fclose(f);
+    err[0] = 0; assert(open_path(p, err, sizeof err) == NULL);
+
+    // DFF: the same inside PROP.
+    f = fopen(p, "wb");
+    fwrite("FRM8", 1, 4, f); put64be(f, 1000); fwrite("DSD ", 1, 4, f);
+    fwrite("PROP", 1, 4, f); put64be(f, 100); fwrite("SND ", 1, 4, f);
+    fwrite("FS  ", 1, 4, f); put64be(f, (uint64_t) -12); put32be(f, RATE);
+    for (int i = 0; i < 100; i++) fputc(0, f);
+    fclose(f);
+    err[0] = 0; assert(open_path(p, err, sizeof err) == NULL);
+
+    // DSF: absurd fmt size, block size and sample rate.
+    uint64_t fmts[] = {(uint64_t) -1, 52, 52};
+    uint32_t blocks[] = {4096, 0x7FFFFFFF, 4096};
+    uint32_t rates[] = {RATE, RATE, 2822400u * 64};
+    for (int k = 0; k < 3; k++) {
+        f = fopen(p, "wb");
+        fwrite("DSD ", 1, 4, f); put64le(f, 28); put64le(f, 92 + 8192); put64le(f, 0);
+        fwrite("fmt ", 1, 4, f); put64le(f, fmts[k]); put32le(f, 1); put32le(f, 0); put32le(f, 2); put32le(f, 2);
+        put32le(f, rates[k]); put32le(f, 1); put64le(f, 8 * 4096); put32le(f, blocks[k]); put32le(f, 0);
+        fwrite("data", 1, 4, f); put64le(f, 12 + 8192);
+        for (int i = 0; i < 8192; i++) fputc(0x69, f);
+        fclose(f);
+        err[0] = 0; assert(open_path(p, err, sizeof err) == NULL);
+    }
+
+    // DFF whose DSD chunk claims more than the file holds (a truncated download): it opens, the
+    // length is what is really there, and reading stops cleanly at the end.
+    write_dff_n(p, 1000);
+    assert(truncate(p, 200) == 0);
+    err[0] = 0;
+    Decoder *d = open_path(p, err, sizeof err);
+    assert(d && d->info.total_frames > 0 && d->info.total_frames < 1000);
+    float out[2 * 4096];
+    int got, total = 0;
+    while ((got = d->read(d, (uint8_t *) out, 4096)) > 0) total += got;
+    assert(got == 0 && total == d->info.total_frames);
+    d->close(d);
+    alarm(0);
+    puts("hostile headers: refused or opened safely");
+}
+
 int main(void) {
     modulate();
     write_dsf("/tmp/allmeyn-native-tests/t.dsf");
@@ -262,6 +324,7 @@ int main(void) {
     check_file("/tmp/allmeyn-native-tests/t.dff", "DFF");
     check_dop_padding();
     check_pcm_join();
+    check_hostile_headers();
     // Higher rates: native frame rate = DSD rate / 32; DoP stops at DSD256; DSD512 without native -> PCM
     struct { uint32_t rate; int native_fr; int dop_rate; } hr[] = {
         {5644800, 176400, 352800}, {11289600, 352800, 705600}, {22579200, 705600, 0}, {24576000, 768000, 0},

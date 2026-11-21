@@ -144,7 +144,7 @@ object TagReader {
             if (h.size < 12) return
             val id = String(h, 0, 4, Charsets.US_ASCII)
             val len = ByteBuffer.wrap(h, 4, 8).order(ByteOrder.BIG_ENDIAN).long
-            if (len < 0) return
+            if (len < 0 || len > size - pos - 12) return // damaged size: stop, don't wrap around
             if (id == "ID3 ") {
                 id3(readAt(pfd, pos + 12, len.coerceAtMost(MAX_TAG_BYTES.toLong()).toInt()), t)
                 return
