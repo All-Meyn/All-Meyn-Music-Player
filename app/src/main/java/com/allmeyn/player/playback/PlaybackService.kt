@@ -1,6 +1,12 @@
 package com.allmeyn.player.playback
 
 import android.content.Intent
+import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
+import androidx.media3.common.Tracks
+import com.allmeyn.player.library.TagReader
+import java.util.concurrent.Executors
 import android.net.Uri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
@@ -94,8 +100,60 @@ class PlaybackService : MediaSessionService() {
         player.addListener(object : Player.Listener {
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) = maybeEnableDriverForDsd(player, driver)
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) = maybeEnableDriverForDsd(player, driver)
+            // A new song's tracks (and tags) are known: set its ReplayGain.
+            override fun onTracksChanged(tracks: Tracks) = applyReplayGain(player)
         })
+        val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == ReplayGain.KEY) applyReplayGain(player)
+        }
+        ReplayGain.prefs(this).registerOnSharedPreferenceChangeListener(prefListener)
+        replayGainPrefListener = prefListener
     }
+
+    // ---- ReplayGain -------------------------------------------------------------------------
+
+    private var replayGainPrefListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+    private val tagExecutor = Executors.newSingleThreadExecutor { Thread(it, "replaygain-tags") }
+    private var replayGainRequest = 0
+
+    /**
+     * Sets the player volume from the current song's ReplayGain tags. Player volume only affects
+     * Android outputs; the USB driver ignores it, so bit-perfect output stays untouched.
+     */
+    private fun applyReplayGain(player: ExoPlayer) {
+        val request = ++replayGainRequest
+        val mode = ReplayGain.mode(this)
+        val uri = player.currentMediaItem?.localConfiguration?.uri
+        if (mode == ReplayGain.Mode.OFF || uri == null) return setReplayGain(player, null, mode)
+        val format = player.currentTracks.groups
+            .firstOrNull { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
+            ?.let { g -> (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { g.getTrackFormat(it) } }
+        val gains = ReplayGain.fromMetadata(format?.metadata)
+        val ext = uri.toString().substringAfterLast('.', "").lowercase()
+        if (!gains.isEmpty || ext !in setOf("dsf", "dff", "ape", "wv")) return setReplayGain(player, gains, mode)
+        // Decoded formats reach Media3 as WAV without tags: read them from the file.
+        tagExecutor.execute {
+            val tags = try {
+                contentResolver.openFileDescriptor(uri, "r")?.use { TagReader.extraTags(it, ext) }.orEmpty()
+            } catch (e: Exception) {
+                emptyMap()
+            }
+            val fromFile = ReplayGain.fromTags(tags)
+            mainHandler.post { if (request == replayGainRequest) setReplayGain(player, fromFile, mode) }
+        }
+    }
+
+    private fun setReplayGain(player: ExoPlayer, gains: ReplayGain.Gains?, mode: ReplayGain.Mode) {
+        val db = gains?.let { ReplayGain.pick(it, mode) }
+        player.volume = ReplayGain.volumeFor(db)
+        ReplayGain.applied = when {
+            mode == ReplayGain.Mode.OFF -> null
+            db == null -> "no ReplayGain tag"
+            else -> "%+.1f dB (%s)".format(db, mode.name.lowercase()) + if (db > 0) " · capped at 0 dB" else ""
+        }
+    }
+
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     /** The song the driver was last turned on for (or tried): don't retry the same one. */
     private var autoEnabledFor: Uri? = null
@@ -141,6 +199,8 @@ class PlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        replayGainPrefListener?.let { ReplayGain.prefs(this).unregisterOnSharedPreferenceChangeListener(it) }
+        tagExecutor.shutdown()
         val driver = (application as AllMeynApp).usbDriver
         driverListener?.let { driver.removeListener(it) }
         dacVolumePlayer?.detachFromDriver()

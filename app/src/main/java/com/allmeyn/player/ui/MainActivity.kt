@@ -44,6 +44,7 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -58,6 +59,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.util.UnstableApi
@@ -65,7 +67,9 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.allmeyn.player.AllMeynApp
 import com.allmeyn.player.decode.DecodeRegistry
+import com.allmeyn.player.library.Track
 import com.allmeyn.player.playback.PlaybackService
+import com.allmeyn.player.playback.ReplayGain
 import com.allmeyn.player.usb.UsbAudioDriver
 import com.google.common.util.concurrent.ListenableFuture
 import kotlinx.coroutines.delay
@@ -126,13 +130,14 @@ private fun AllMeynTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = scheme) { Surface(Modifier.fillMaxSize()) { content() } }
 }
 
-private enum class Tab(val label: String) { Albums("Albums"), Artists("Artists"), Tracks("Tracks"), Folders("Folders") }
+private enum class Tab(val label: String) { Albums("Albums"), Artists("Artists"), Tracks("Tracks"), Playlists("Playlists"), Folders("Folders") }
 
 /** Screens pushed on top of the tabs. */
 private sealed interface Route {
     data class AlbumRoute(val key: String) : Route
     data class ArtistRoute(val name: String) : Route
     data class FolderRoute(val path: String) : Route
+    data class PlaylistRoute(val id: String) : Route
     data object NowPlayingRoute : Route
     data object QueueRoute : Route
     data object SearchRoute : Route
@@ -147,6 +152,12 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     val library by app.library.state.collectAsStateWithLifecycle()
     val driver by app.usbDriver.state.collectAsStateWithLifecycle()
     val androidDac by app.usbDac.status.collectAsStateWithLifecycle()
+    val playlists by app.playlists.state.collectAsStateWithLifecycle()
+    val byUri = remember(library.tracks) { library.tracks.associateBy { it.uri } }
+    val context = LocalContext.current
+    // Songs waiting for the "Add to playlist" dialog.
+    var pendingAdd by remember { mutableStateOf<List<Track>?>(null) }
+    fun added(name: String, n: Int) = Toast.makeText(context, "Added ${countOf(n, "song")} to $name", Toast.LENGTH_SHORT).show()
 
     var tab by rememberSaveable { mutableStateOf(Tab.Albums) }
     val stack = remember { mutableStateListOf<Route>() }
@@ -163,12 +174,15 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     var decoderLabel by remember { mutableStateOf<String?>(null) }
     var decoderError by remember { mutableStateOf<String?>(null) }
     var driverStatus by remember { mutableStateOf("") }
+    var gainLabel by remember { mutableStateOf<String?>(null) }
+    var replayGainMode by remember { mutableStateOf(ReplayGain.mode(app)) }
     LaunchedEffect(Unit) {
         while (true) {
             peak = app.levelMeter.peak
             pluginFormat = app.levelMeter.formatLabel
             decoderLabel = DecodeRegistry.lastDescription
             decoderError = DecodeRegistry.lastError
+            gainLabel = ReplayGain.applied
             delay(100)
         }
     }
@@ -188,6 +202,17 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     val sourceLabel = decoderLabel ?: pluginFormat.takeIf { it != "—" }.orEmpty()
     val route = driverStatus.lineSequence().firstOrNull { it.startsWith("Player output:") }?.substringAfter(": ").orEmpty()
 
+    pendingAdd?.let { songs ->
+        AddToPlaylistDialog(
+            tracks = songs,
+            playlists = playlists,
+            onAdd = { p -> app.playlists.add(p.id, songs.map { it.uri }); pendingAdd = null; added(p.name, songs.size) },
+            onCreate = { name -> app.playlists.create(name, songs.map { it.uri }); pendingAdd = null; added(name, songs.size) },
+            onDismiss = { pendingAdd = null },
+        )
+    }
+
+    CompositionLocalProvider(LocalAddToPlaylist provides { pendingAdd = it }) {
     Scaffold(
         topBar = {
             TopAppBar(
@@ -197,6 +222,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                             is Route.AlbumRoute -> library.albums.firstOrNull { it.key == top.key }?.title.orEmpty()
                             is Route.ArtistRoute -> top.name
                             is Route.FolderRoute -> top.path.substringAfterLast('/')
+                            is Route.PlaylistRoute -> playlists.firstOrNull { it.id == top.id }?.name.orEmpty()
                             Route.NowPlayingRoute -> "Now playing"
                             Route.QueueRoute -> "Queue"
                             Route.SearchRoute -> "Search"
@@ -243,6 +269,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                                             Tab.Albums -> PlayerIcons.Album
                                             Tab.Artists -> Icons.Filled.Person
                                             Tab.Tracks -> Icons.AutoMirrored.Filled.List
+                                            Tab.Playlists -> PlayerIcons.Playlist
                                             Tab.Folders -> PlayerIcons.Folder
                                         },
                                         t.label,
@@ -270,7 +297,18 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                     is Route.ArtistRoute -> library.artists.firstOrNull { it.name == top.name }
                         ?.let { a -> ArtistDetail(a, { stack.add(Route.AlbumRoute(it.key)) }, player) }
                     is Route.FolderRoute -> FolderBrowser(library.folderTree, top.path, { stack.add(Route.FolderRoute(it)) }, playing, player)
-                    Route.QueueRoute -> QueueScreen(player)
+                    Route.QueueRoute -> QueueScreen(player) { name, uris ->
+                        app.playlists.create(name, uris)
+                        added(name, uris.size)
+                    }
+                    is Route.PlaylistRoute -> playlists.firstOrNull { it.id == top.id }?.let { p ->
+                        PlaylistDetail(
+                            playlist = p, byUri = byUri, playingUri = playing, player = player,
+                            onRemove = { app.playlists.removeAt(p.id, it) },
+                            onRename = { app.playlists.rename(p.id, it) },
+                            onDelete = { app.playlists.delete(p.id); stack.removeAt(stack.lastIndex) },
+                        )
+                    }
                     Route.SearchRoute -> SearchScreen(
                         library = library,
                         playingUri = playing,
@@ -278,7 +316,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         onOpenAlbum = { stack.add(Route.AlbumRoute(it.key)) },
                         onOpenArtist = { stack.add(Route.ArtistRoute(it.name)) },
                     )
-                    Route.NowPlayingRoute -> NowPlaying(player, sourceLabel, peak, driver, route, app.usbDriver::setVolumeStep)
+                    Route.NowPlayingRoute -> NowPlaying(player, sourceLabel, peak, driver, route, gainLabel, app.usbDriver::setVolumeStep)
                     Route.SettingsRoute -> SettingsScreen(
                         library = library,
                         folderLabel = app.library::folderLabel,
@@ -292,6 +330,8 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         onDacVolume = app.usbDriver::setVolumeStep,
                         onNativeDsd = { app.usbDriver.nativeDsdEnabled = it },
                         onAutoForDsd = { app.usbDriver.autoEnableForDsd = it },
+                        replayGain = replayGainMode,
+                        onReplayGain = { replayGainMode = it; ReplayGain.setMode(app, it) },
                         onProbe = { cb -> app.usbDriver.probe(cb) },
                         onTone = { rate, bits -> player.pause(); app.usbDriver.startTone(rate, bits) {} },
                         pluginName = app.levelMeter.name,
@@ -310,6 +350,9 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                                 Tab.Albums -> AlbumsGrid(library.albums) { stack.add(Route.AlbumRoute(it.key)) }
                                 Tab.Artists -> ArtistsList(library.artists) { stack.add(Route.ArtistRoute(it.name)) }
                                 Tab.Tracks -> TracksList(library.tracks, playing, player)
+                                Tab.Playlists -> PlaylistsList(playlists, byUri, { stack.add(Route.PlaylistRoute(it.id)) }) { name ->
+                                    stack.add(Route.PlaylistRoute(app.playlists.create(name)))
+                                }
                                 Tab.Folders -> FolderBrowser(library.folderTree, null, { stack.add(Route.FolderRoute(it)) }, playing, player)
                             }
                         }
@@ -317,6 +360,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                 }
             }
         }
+    }
     }
 }
 

@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.media3.common.util.UnstableApi
 import com.allmeyn.player.audio.AllMeynRenderersFactory
 import com.allmeyn.player.library.MusicLibrary
+import com.allmeyn.player.library.PlaylistStore
 import com.allmeyn.player.plugin.LevelMeterPlugin
 import com.allmeyn.player.plugin.PluginHost
 import com.allmeyn.player.usb.UsbAudioDriver
@@ -20,6 +21,9 @@ class AllMeynApp : Application() {
 
     /** Music library: folders the user picked, scanned and cached. */
     val library by lazy { MusicLibrary(this) }
+
+    /** User playlists (playlists.json). */
+    val playlists by lazy { PlaylistStore(this) }
 
     /** Example capture plugin. Register your own plugin here too. */
     val levelMeter = LevelMeterPlugin()

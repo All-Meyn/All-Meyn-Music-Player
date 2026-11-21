@@ -46,7 +46,7 @@ import androidx.compose.ui.unit.dp
  * shuffle on the play order is the shuffle, so moving is hidden.
  */
 @Composable
-fun QueueScreen(player: PlayerUi) {
+fun QueueScreen(player: PlayerUi, onSaveAsPlaylist: (name: String, uris: List<String>) -> Unit) {
     val entries = remember(player.queueVersion) { player.queue() }
     val current = remember(player.queueVersion) { player.currentIndex }
     val currentPos = entries.indexOfFirst { it.index == current }
@@ -112,7 +112,15 @@ fun QueueScreen(player: PlayerUi) {
                 countOf(upcoming, "song") + " up next" + if (player.shuffle) " · shuffled" else "",
                 style = MaterialTheme.typography.labelLarge, modifier = Modifier.weight(1f),
             )
+            var naming by remember { mutableStateOf(false) }
+            TextButton(onClick = { naming = true }) { Text("Save") }
             if (entries.size > 1) TextButton(onClick = { player.clearUpcoming() }) { Text("Clear others") }
+            if (naming) {
+                NameDialog("Save queue as playlist", "", onDismiss = { naming = false }) {
+                    naming = false
+                    onSaveAsPlaylist(it, entries.map { e -> e.uri })
+                }
+            }
         }
         LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 8.dp)) {
             itemsIndexed(rows, key = { _, e -> keyOf(e) }) { pos, e ->

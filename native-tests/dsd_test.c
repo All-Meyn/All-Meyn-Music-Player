@@ -7,6 +7,9 @@
 #include <string.h>
 #include <unistd.h>
 
+#ifndef JOIN_LIMIT
+#define JOIN_LIMIT 0.05
+#endif
 #define RATE 2822400
 #define SECONDS 1
 #define NBITS (RATE * SECONDS)
@@ -47,7 +50,9 @@ static void write_dsf_rate(const char *path, uint32_t rate) {
     fclose(f);
 }
 
-static void write_dff_n(const char *path, uint64_t bpc) {
+static void write_dff_range(const char *path, uint64_t from, uint64_t bpc);
+static void write_dff_n(const char *path, uint64_t bpc) { write_dff_range(path, 0, bpc); }
+static void write_dff_range(const char *path, uint64_t from, uint64_t bpc) {
     FILE *f = fopen(path, "wb");
     uint64_t dsd = bpc * 2;
     uint64_t prop = 4 + (12 + 4) + (12 + 2 + 8) + (12 + 4 + 1 + 1);  // SND + FS + CHNL + CMPR(odd->pad)
@@ -59,10 +64,54 @@ static void write_dff_n(const char *path, uint64_t bpc) {
     fwrite("CHNL", 1, 4, f); put64be(f, 10); fputc(0, f); fputc(2, f); fwrite("SLFTSRGT", 1, 8, f);
     fwrite("CMPR", 1, 4, f); put64be(f, 5); fwrite("DSD ", 1, 4, f); fputc(0, f); fputc(0, f); // count + pad
     fwrite("DSD ", 1, 4, f); put64be(f, dsd);
-    for (uint64_t i = 0; i < bpc; i++) { fputc(bits[0][i], f); fputc(bits[1][i], f); }
+    for (uint64_t i = from; i < from + bpc; i++) { fputc(bits[0][i], f); fputc(bits[1][i], f); }
     fclose(f);
 }
 static void write_dff(const char *path) { write_dff_n(path, NBITS / 8); }
+
+static float *pcm_of(const char *path, int *frames) {
+    char err[128] = "";
+    int fd = open(path, O_RDONLY);
+    Decoder *d = dsd_open(fd, 0, 0, err, sizeof err);
+    assert(d);
+    int n = (int) d->info.total_frames, got = 0, r;
+    float *p = malloc(sizeof(float) * 2 * n);
+    while ((r = d->read(d, (uint8_t *) (p + 2 * got), 1000)) > 0) got += r;
+    assert(got == n);
+    d->close(d);
+    close(fd);
+    *frames = n;
+    return p;
+}
+
+/**
+ * Gapless DSD -> PCM: one continuous stream split into two files. Converting each file on its
+ * own and playing them back to back must match converting the whole stream, also at the join.
+ */
+static void check_pcm_join(void) {
+    uint64_t total = NBITS / 8, half = 100000;  // bytes per channel; split mid-tone
+    write_dff_range("/tmp/allmeyn-native-tests/whole.dff", 0, total);
+    write_dff_range("/tmp/allmeyn-native-tests/a.dff", 0, half);
+    write_dff_range("/tmp/allmeyn-native-tests/b.dff", half, total - half);
+    int nw, na, nb;
+    float *w = pcm_of("/tmp/allmeyn-native-tests/whole.dff", &nw);
+    float *a = pcm_of("/tmp/allmeyn-native-tests/a.dff", &na);
+    float *b = pcm_of("/tmp/allmeyn-native-tests/b.dff", &nb);
+    assert(na + nb == nw);
+    double worst = 0;
+    for (int j = na - 40; j < na + 40; j++) {
+        float v = j < na ? a[2 * j] : b[2 * (j - na)];
+        double dd = fabs(v - w[2 * j]);
+        if (dd > worst) worst = dd;
+    }
+    double interior = 0;
+    for (int j = 1000; j < na - 1000; j++) { double dd = fabs(a[2 * j] - w[2 * j]); if (dd > interior) interior = dd; }
+    printf("DSD->PCM gapless join: max error at the join %.4f (signal 0.5), elsewhere %.1e\n", worst, interior);
+    fflush(stdout);
+    assert(interior < 1e-6);
+    assert(worst < JOIN_LIMIT);
+    free(w); free(a); free(b);
+}
 
 /** DoP of a track whose length isn't a multiple of 4 bytes: even frame count, idle padding, markers alternate. */
 static void check_dop_padding(void) {
@@ -134,7 +183,8 @@ static void check_file(const char *path, const char *name) {
     double a1 = tone_amp(pcm + 2 * a, len, 1, 2, 3000, 176400);
     int fn = 131072;
     double *err_sig = malloc(sizeof(double) * fn);
-    for (int i = 0; i < fn; i++) { double tt = ((a + i + 1) * 16.0 - 1 - (384 - 1) / 2.0) / RATE; err_sig[i] = pcm[2 * (a + i)] - 0.5 * sin(2 * M_PI * 1000 * tt); }
+    // Output j's window is bytes [2j-23, 2j+25): centred on bit 16j + 7.5.
+    for (int i = 0; i < fn; i++) { double tt = ((a + i) * 16.0 + 7.5) / RATE; err_sig[i] = pcm[2 * (a + i)] - 0.5 * sin(2 * M_PI * 1000 * tt); }
     double inband = inband_err_db(err_sig, fn, 176400, 0.5);
     free(err_sig);
     printf("%s PCM: ch0 1k=%.4f (want 0.5) 3k leak=%.5f · ch1 3k=%.4f (want 0.25) · in-band (<20 kHz) error %.1f dB\n",
@@ -147,7 +197,7 @@ static void check_file(const char *path, const char *name) {
     for (int t = 0; t < N; t++) { double x = t - mid; h[t] = (x == 0 ? 2 * fc : sin(2 * M_PI * fc * x) / (M_PI * x)) * (0.42 - 0.5 * cos(2 * M_PI * t / (N - 1)) + 0.08 * cos(4 * M_PI * t / (N - 1))); hs += h[t]; }
     double maxdiff = 0;
     for (int j = 1000; j < 3000; j++) {
-        long nb = (long) (j + 1) * 16 - 1; double y = 0;
+        long nb = 8L * (2L * j + 24) + 7; double y = 0;  // newest bit of the centred window
         for (int t = 0; t < N; t++) { long n = nb - t; int bit = (bits[0][n / 8] >> (7 - n % 8)) & 1; y += h[t] / hs * (bit ? 1 : -1); }
         double dd = fabs(y - pcm[2 * j]); if (dd > maxdiff) maxdiff = dd;
     }
@@ -211,6 +261,7 @@ int main(void) {
     check_file("/tmp/allmeyn-native-tests/t.dsf", "DSF");
     check_file("/tmp/allmeyn-native-tests/t.dff", "DFF");
     check_dop_padding();
+    check_pcm_join();
     // Higher rates: native frame rate = DSD rate / 32; DoP stops at DSD256; DSD512 without native -> PCM
     struct { uint32_t rate; int native_fr; int dop_rate; } hr[] = {
         {5644800, 176400, 352800}, {11289600, 352800, 705600}, {22579200, 705600, 0}, {24576000, 768000, 0},

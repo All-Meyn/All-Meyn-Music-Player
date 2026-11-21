@@ -27,6 +27,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -116,6 +117,8 @@ fun AlbumDetail(album: Album, playingUri: String, player: PlayerUi) {
                 OutlinedButton(onClick = { player.shuffleTracks(album.tracks) }) {
                     Icon(PlayerIcons.Shuffle, null); Text("Shuffle", Modifier.padding(start = 4.dp))
                 }
+                val addToPlaylist = LocalAddToPlaylist.current
+                IconButton(onClick = { addToPlaylist(album.tracks) }) { Icon(PlayerIcons.PlaylistAdd, "Add album to playlist") }
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -228,8 +231,10 @@ fun TrackRow(
     leading: @Composable () -> Unit,
     subtitle: String,
     player: PlayerUi,
+    trailing: (@Composable () -> Unit)? = null,
     onClick: () -> Unit,
 ) {
+    val addToPlaylist = LocalAddToPlaylist.current
     val color = if (playing) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
     var menu by remember { mutableStateOf(false) }
     Row(
@@ -241,6 +246,7 @@ fun TrackRow(
         DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
             DropdownMenuItem(text = { Text("Play next") }, onClick = { menu = false; player.playNext(track) })
             DropdownMenuItem(text = { Text("Add to queue") }, onClick = { menu = false; player.addToQueue(track) })
+            DropdownMenuItem(text = { Text("Add to playlist…") }, onClick = { menu = false; addToPlaylist(listOf(track)) })
         }
         Box(Modifier.padding(end = 12.dp), contentAlignment = Alignment.Center) { leading() }
         Column(Modifier.weight(1f)) {
@@ -252,5 +258,6 @@ fun TrackRow(
         if (track.durationMs > 0) {
             Text(formatTime(track.durationMs), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 8.dp))
         }
+        trailing?.invoke()
     }
 }

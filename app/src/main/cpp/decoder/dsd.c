@@ -8,7 +8,8 @@
 //    0x05 / 0xFA marker byte, at DSD rate / 16. A DoP-capable DAC (the KA17 up to DoP256) plays
 //    it as native DSD. Bit-exact; nothing may alter the samples on the way.
 //  - PCM: 32-bit float at 176.4 kHz (192 kHz for 48k-family DSD), via a linear-phase FIR
-//    low-pass (Blackman-windowed sinc, -6 dB at 40 kHz) evaluated with per-byte lookup tables.
+//    low-pass (Blackman-windowed sinc, -6 dB at 40 kHz) evaluated with per-byte lookup tables,
+//    window centred on each output frame, file edges mirrored (gapless joins stay clean).
 //    Used for the phone speaker / Android output, DSD512, and so plugins get real audio.
 // DST-compressed DFF is not supported.
 
@@ -80,8 +81,14 @@ static int ensure(uint8_t **p, size_t *cap, size_t need) {
     return 0;
 }
 
-/** Fills d->buf[c][0..n) with DSD bytes [start, start+n) of each channel, MSB = oldest bit. */
-static int fetch(Dsd *d, int64_t start, int n) {
+/**
+ * Fills d->buf[c][0..n) with DSD bytes [start, start+n) of each channel, MSB = oldest bit.
+ * Outside the file: DSD idle, or with [mirror] the stream reflected at the file's edge
+ * (byte -1-m = bit-reversed byte m; byte N+m = bit-reversed byte N-1-m), which keeps the PCM
+ * filter's edge windows at the music's own level instead of pulling them towards silence. That's
+ * what makes gapless DSD -> PCM joins clean.
+ */
+static int fetch_ex(Dsd *d, int64_t start, int n, int mirror) {
     size_t need = (size_t) n;
     if (d->buf_cap < need) {
         for (int c = 0; c < d->channels; c++) {
@@ -127,8 +134,22 @@ static int fetch(Dsd *d, int64_t start, int n) {
         for (int c = 0; c < d->channels; c++)
             for (int64_t i = lo; i < hi; i++) d->buf[c][i - start] = d->bitrev[d->buf[c][i - start]];
     }
+    if (mirror) {
+        int64_t N = d->bytes_per_ch;
+        for (int c = 0; c < d->channels; c++) {
+            uint8_t *b = d->buf[c];
+            for (int64_t i = start; i < start + n; i++) {
+                if (i >= 0 && i < N) continue;
+                int64_t src = i < 0 ? -1 - i : 2 * N - 1 - i;
+                // Only from bytes loaded above (edges are at most half a filter long); else idle.
+                if (src >= lo && src < hi) b[i - start] = d->bitrev[b[src - start]];
+            }
+        }
+    }
     return 0;
 }
+
+static int fetch(Dsd *d, int64_t start, int n) { return fetch_ex(d, start, n, 0); }
 
 static int dop_read(Decoder *base, uint8_t *out, int max_frames) {
     Dsd *d = (Dsd *) base;
@@ -173,9 +194,10 @@ static int pcm_read(Decoder *base, uint8_t *out, int max_frames) {
     int frames = left < max_frames ? (int) left : max_frames;
     if (frames <= 0) return 0;
     const int L = d->taps_bytes, R = d->step;
-    // Output j's newest byte is (j+1)*R - 1; it needs the L bytes ending there.
-    int64_t start = d->out_frame * R + R - L;
-    if (fetch(d, start, (frames - 1) * R + L)) return -1;
+    // Output j's filter window is centred on its own R bytes: bytes [j*R + (R-L)/2, +L). No
+    // half-filter delay, and each track's PCM covers exactly its own DSD (edges mirrored).
+    int64_t start = d->out_frame * R + (R - L) / 2;
+    if (fetch_ex(d, start, (frames - 1) * R + L, 1)) return -1;
     float *o = (float *) out;
     for (int f = 0; f < frames; f++) {
         for (int c = 0; c < d->channels; c++) {

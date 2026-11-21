@@ -43,6 +43,7 @@ fun NowPlaying(
     peak: Float,
     driver: UsbAudioDriver.State,
     driverRoute: String,
+    gainLabel: String?,
     onDacVolume: (Int) -> Unit,
 ) {
     Column(
@@ -110,6 +111,7 @@ fun NowPlaying(
             if (driver.active) "${driver.deviceName ?: "USB DAC"} · All-Meyn USB driver · bit-perfect · ${driverRoute.removePrefix("USB driver · ")}"
             else "Android audio",
         )
+        if (!driver.active && gainLabel != null) InfoLine("Gain", "ReplayGain $gainLabel")
         if (!sourceLabel.contains("DoP")) {
             LinearProgressIndicator(progress = { peak }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
         }
