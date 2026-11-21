@@ -68,6 +68,8 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.core)
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
+    implementation(libs.liquidglass)
+    implementation(libs.liquidglass.material3)
 
     implementation(libs.media3.exoplayer)
     implementation(libs.media3.session)

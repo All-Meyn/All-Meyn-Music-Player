@@ -10,16 +10,18 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -34,18 +36,16 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -57,6 +57,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -74,6 +76,11 @@ import com.allmeyn.player.playback.ReplayGain
 import com.allmeyn.player.dsp.DspSettings
 import com.allmeyn.player.usb.UsbAudioDriver
 import com.google.common.util.concurrent.ListenableFuture
+import com.wexpa.liquidglass.LiquidGlassTheme
+import com.wexpa.liquidglass.material3.NavigationBar
+import com.wexpa.liquidglass.material3.NavigationBarItem
+import com.wexpa.liquidglass.material3.TopAppBar
+import com.wexpa.liquidglass.material3.Surface as GlassSurface
 import kotlinx.coroutines.delay
 
 @UnstableApi
@@ -129,8 +136,22 @@ private fun AllMeynTheme(content: @Composable () -> Unit) {
         dark -> darkColorScheme()
         else -> lightColorScheme()
     }
-    MaterialTheme(colorScheme = scheme) { Surface(Modifier.fillMaxSize()) { content() } }
+    // Liquid Glass: records the screen once per frame; every glass element below refracts it. The
+    // dialogs and menus draw in this window too, so it wraps everything, the playlist dialog included.
+    MaterialTheme(colorScheme = scheme) {
+        LiquidGlassTheme(dark = dark, background = scheme.surface) {
+            Surface(Modifier.fillMaxSize()) { content() }
+        }
+    }
 }
+
+/** How much of the screen's bottom the glass mini player and tab bar cover: lists pad their end by it. */
+val LocalBottomBarPadding = compositionLocalOf { 0.dp }
+
+/** A list's content padding plus [LocalBottomBarPadding], so it scrolls under the bottom bars. */
+@Composable
+fun belowBars(start: Dp = 0.dp, top: Dp = 0.dp, end: Dp = 0.dp, bottom: Dp = 0.dp) =
+    PaddingValues(start, top, end, bottom + LocalBottomBarPadding.current)
 
 private enum class Tab(val label: String) { Albums("Albums"), Artists("Artists"), Tracks("Tracks"), Playlists("Playlists"), Folders("Folders") }
 
@@ -237,31 +258,33 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 },
-                navigationIcon = {
-                    if (top != null) {
+                // Null, not empty: the glass bar draws a round button / capsule around whatever it is given.
+                navigationIcon = if (top == null) null else {
+                    {
                         IconButton(onClick = { stack.removeAt(stack.lastIndex) }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                         }
                     }
                 },
-                actions = {
-                    if (top == null) {
-                        IconButton(onClick = { stack.add(Route.SearchRoute) }) { Icon(Icons.Filled.Search, "Search") }
-                    }
-                    if (top == Route.NowPlayingRoute) {
-                        IconButton(onClick = { stack.add(Route.DspRoute) }) {
-                            Icon(PlayerIcons.Tune, "DSP", tint = if (dspParams.processes) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+                actions = if (top == Route.SettingsRoute) null else {
+                    {
+                        if (top == null) {
+                            IconButton(onClick = { stack.add(Route.SearchRoute) }) { Icon(Icons.Filled.Search, "Search") }
                         }
-                        IconButton(onClick = { stack.add(Route.QueueRoute) }) { Icon(PlayerIcons.Queue, "Queue") }
-                    }
-                    if (top != Route.SettingsRoute) {
+                        if (top == Route.NowPlayingRoute) {
+                            IconButton(onClick = { stack.add(Route.DspRoute) }) {
+                                Icon(PlayerIcons.Tune, "DSP", tint = if (dspParams.processes) MaterialTheme.colorScheme.primary else LocalContentColor.current)
+                            }
+                            IconButton(onClick = { stack.add(Route.QueueRoute) }) { Icon(PlayerIcons.Queue, "Queue") }
+                        }
                         IconButton(onClick = { stack.add(Route.SettingsRoute) }) { Icon(Icons.Filled.Settings, "Settings") }
                     }
                 },
             )
         },
         bottomBar = {
-            Column {
+            // The glass tab bar keeps clear of the system navigation bar itself; alone, the mini player must.
+            Column(if (top != null) Modifier.navigationBarsPadding() else Modifier) {
                 if (player.hasMedia && top != Route.NowPlayingRoute) {
                     MiniPlayer(player) { stack.add(Route.NowPlayingRoute) }
                 }
@@ -291,7 +314,11 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
             }
         },
     ) { padding ->
-        Column(Modifier.padding(padding).fillMaxSize()) {
+        // The content runs under the bottom bars (the glass refracts it); lists pad their end instead.
+        val dir = LocalLayoutDirection.current
+        val above = PaddingValues(start = padding.calculateStartPadding(dir), top = padding.calculateTopPadding(), end = padding.calculateEndPadding(dir))
+        CompositionLocalProvider(LocalBottomBarPadding provides padding.calculateBottomPadding()) {
+        Column(Modifier.padding(above).fillMaxSize()) {
             val problem = listOfNotNull(player.error, decoderError?.let { "Decoder: $it" }).joinToString("\n")
             if (problem.isNotEmpty()) ErrorBanner(problem) {
                 player.error = null
@@ -375,21 +402,18 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                 }
             }
         }
+        }
     }
     }
 }
 
 @Composable
 private fun MiniPlayer(player: PlayerUi, onOpen: () -> Unit) {
-    Surface(tonalElevation = 3.dp) {
+    // A floating glass panel; tapping it opens Now playing.
+    GlassSurface(onClick = onOpen, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), shape = RoundedCornerShape(22.dp)) {
         Column {
-            val d = player.durationMs.coerceAtLeast(1)
-            LinearProgressIndicator(
-                progress = { (player.positionMs.toFloat() / d).coerceIn(0f, 1f) },
-                modifier = Modifier.fillMaxWidth().height(2.dp),
-            )
             Row(
-                Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(horizontal = 12.dp, vertical = 8.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Artwork(player.artPath, Modifier.size(44.dp), corner = 6.dp)
@@ -402,6 +426,11 @@ private fun MiniPlayer(player: PlayerUi, onOpen: () -> Unit) {
                 }
                 IconButton(onClick = { player.next() }) { Icon(PlayerIcons.Next, "Next") }
             }
+            val d = player.durationMs.coerceAtLeast(1)
+            LinearProgressIndicator(
+                progress = { (player.positionMs.toFloat() / d).coerceIn(0f, 1f) },
+                modifier = Modifier.fillMaxWidth().padding(start = 18.dp, end = 18.dp, bottom = 6.dp).height(2.dp),
+            )
         }
     }
 }

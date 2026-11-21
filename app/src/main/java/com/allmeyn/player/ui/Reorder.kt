@@ -66,7 +66,7 @@ class ReorderState<T>(
         val edge = 48f * density
         val top = cur.offset + dragOffset
         val scroll = when {
-            top + cur.size > info.viewportEndOffset - edge -> 12f * density
+            top + cur.size > info.viewportEndOffset - info.afterContentPadding - edge -> 12f * density
             top < info.viewportStartOffset + edge -> -12f * density
             else -> 0f
         }

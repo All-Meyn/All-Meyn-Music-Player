@@ -13,12 +13,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.FilledIconButton
+import com.wexpa.liquidglass.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Slider
+import com.wexpa.liquidglass.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -48,7 +48,8 @@ fun NowPlaying(
     onDacVolume: (Int) -> Unit,
 ) {
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 12.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(bottom = LocalBottomBarPadding.current).padding(horizontal = 24.dp, vertical = 12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Artwork(player.artPath, Modifier.widthIn(max = 380.dp).fillMaxWidth().aspectRatio(1f), corner = 16.dp)
