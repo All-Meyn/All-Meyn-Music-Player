@@ -31,13 +31,15 @@ static void modulate(void) {  // 2nd-order sigma-delta; ch0 1 kHz @ 0.5, ch1 3 k
     }
 }
 
-static void write_dsf(const char *path) {
+static void write_dsf_rate(const char *path, uint32_t rate);
+static void write_dsf(const char *path) { write_dsf_rate(path, RATE); }
+static void write_dsf_rate(const char *path, uint32_t rate) {
     FILE *f = fopen(path, "wb");
     int B = 4096, bpc = NBITS / 8, blocks = (bpc + B - 1) / B;
     uint64_t data = (uint64_t) blocks * B * 2;
     fwrite("DSD ", 1, 4, f); put64le(f, 28); put64le(f, 92 + data); put64le(f, 0);
     fwrite("fmt ", 1, 4, f); put64le(f, 52); put32le(f, 1); put32le(f, 0); put32le(f, 2); put32le(f, 2);
-    put32le(f, RATE); put32le(f, 1); put64le(f, NBITS); put32le(f, B); put32le(f, 0);
+    put32le(f, rate); put32le(f, 1); put64le(f, NBITS); put32le(f, B); put32le(f, 0);
     fwrite("data", 1, 4, f); put64le(f, 12 + data);
     for (int b = 0; b < blocks; b++)
         for (int c = 0; c < 2; c++)
@@ -45,9 +47,9 @@ static void write_dsf(const char *path) {
     fclose(f);
 }
 
-static void write_dff(const char *path) {
+static void write_dff_n(const char *path, uint64_t bpc) {
     FILE *f = fopen(path, "wb");
-    uint64_t bpc = NBITS / 8, dsd = bpc * 2;
+    uint64_t dsd = bpc * 2;
     uint64_t prop = 4 + (12 + 4) + (12 + 2 + 8) + (12 + 4 + 1 + 1);  // SND + FS + CHNL + CMPR(odd->pad)
     uint64_t total = 4 + (12 + 4) + (12 + prop) + (12 + dsd);
     fwrite("FRM8", 1, 4, f); put64be(f, total); fwrite("DSD ", 1, 4, f);
@@ -59,6 +61,34 @@ static void write_dff(const char *path) {
     fwrite("DSD ", 1, 4, f); put64be(f, dsd);
     for (uint64_t i = 0; i < bpc; i++) { fputc(bits[0][i], f); fputc(bits[1][i], f); }
     fclose(f);
+}
+static void write_dff(const char *path) { write_dff_n(path, NBITS / 8); }
+
+/** DoP of a track whose length isn't a multiple of 4 bytes: even frame count, idle padding, markers alternate. */
+static void check_dop_padding(void) {
+    const char *path = "/tmp/allmeyn-native-tests/odd.dff";
+    uint64_t bpc = 1001;  // 1001 bytes per channel -> 500.5 DoP frames -> 502 after padding
+    write_dff_n(path, bpc);
+    char err[128] = "";
+    int fd = open(path, O_RDONLY);
+    Decoder *d = dsd_open(fd, 1, 0, err, sizeof err);
+    assert(d && d->info.is_dop);
+    assert(d->info.total_frames == 502);
+    uint8_t buf[6 * 502];
+    int got = 0, r;
+    while ((r = d->read(d, buf + 6 * got, 100)) > 0) got += r;
+    assert(got == 502);
+    assert(buf[6 * 501 + 2] == 0xFA);  // last marker, so the next track's 0x05 alternates
+    // frame 500: older byte = last real byte 1000, newer byte = idle; frame 501: idle
+    for (int c = 0; c < 2; c++) {
+        const uint8_t *p = buf + 6 * 500 + 3 * c;
+        assert(p[1] == bits[c][1000] && p[0] == 0x69);
+        const uint8_t *q = buf + 6 * 501 + 3 * c;
+        assert(q[0] == 0x69 && q[1] == 0x69);
+    }
+    d->close(d);
+    close(fd);
+    puts("DoP gapless padding: even frame count, ends on 0xFA, idle-padded");
 }
 
 #include <complex.h>
@@ -180,6 +210,28 @@ int main(void) {
     write_dff("/tmp/allmeyn-native-tests/t.dff");
     check_file("/tmp/allmeyn-native-tests/t.dsf", "DSF");
     check_file("/tmp/allmeyn-native-tests/t.dff", "DFF");
+    check_dop_padding();
+    // Higher rates: native frame rate = DSD rate / 32; DoP stops at DSD256; DSD512 without native -> PCM
+    struct { uint32_t rate; int native_fr; int dop_rate; } hr[] = {
+        {5644800, 176400, 352800}, {11289600, 352800, 705600}, {22579200, 705600, 0}, {24576000, 768000, 0},
+    };
+    for (int i = 0; i < 4; i++) {
+        write_dsf_rate("/tmp/allmeyn-native-tests/hr.dsf", hr[i].rate);
+        char e2[128] = "";
+        int hfd = open("/tmp/allmeyn-native-tests/hr.dsf", O_RDONLY);
+        Decoder *n = dsd_open(hfd, 1, 24576000, e2, sizeof e2);
+        assert(n && n->info.is_native && n->info.sample_rate == hr[i].native_fr);
+        uint8_t fr[8]; assert(n->read(n, fr, 1) == 1 && !memcmp(fr, bits[0], 4) && !memcmp(fr + 4, bits[1], 4));
+        n->close(n);
+        Decoder *p = dsd_open(hfd, 1, 0, e2, sizeof e2);
+        assert(p);
+        if (hr[i].dop_rate) assert(p->info.is_dop && p->info.sample_rate == hr[i].dop_rate);
+        else assert(!p->info.is_dop && p->info.format == DEC_F32);
+        unsigned cls = 64u * (hr[i].rate % 44100 ? hr[i].rate / 3072000u : hr[i].rate / 2822400u);
+        printf("DSD%u: native %d Hz frames · %s\n", cls, hr[i].native_fr, p->info.desc);
+        p->close(p);
+        close(hfd);
+    }
     char err[128] = "";
     int fd = open(__FILE__, O_RDONLY);
     assert(dsd_open(fd, 0, 0, err, sizeof err) == NULL);  // not DSD
