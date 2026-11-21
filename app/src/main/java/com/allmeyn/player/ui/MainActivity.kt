@@ -105,7 +105,14 @@ class MainActivity : ComponentActivity() {
         val app = application as AllMeynApp
         // Launched by plugging in the DAC ("Always open All-Meyn"): permission is granted now.
         app.usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
-        setContent { AllMeynTheme { ProvideWindowSize { AppRoot(controller, app) } } }
+        setContent {
+            AllMeynTheme {
+                ProvideWindowSize {
+                    AppRoot(controller, app)
+                    StartupOverlay() // the animated intro, once per launch, over the loading app
+                }
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
