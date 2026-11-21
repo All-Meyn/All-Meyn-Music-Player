@@ -32,19 +32,30 @@ add_library(allmeyn_usb SHARED
 set_source_files_properties(dsp/dsp_chain.cpp dsp/dsp_jni.cpp PROPERTIES COMPILE_OPTIONS "-std=c++17;-O2;-fno-exceptions;-fno-rtti")
 target_link_libraries(allmeyn_usb PRIVATE usb1.0 log m)
 
-# ---- FFmpeg (APE/WavPack), optional: built by scripts/build-ffmpeg.sh --------------------------
+# ---- FFmpeg, optional: built by scripts/build-ffmpeg.sh -----------------------------------------
 set(FFMPEG_DIR ${CMAKE_CURRENT_SOURCE_DIR}/ffmpeg/${ANDROID_ABI})
-if(EXISTS ${FFMPEG_DIR}/lib/libavformat.a)
-    foreach(lib avformat avcodec avutil)
+if(EXISTS ${FFMPEG_DIR}/lib/libavformat.a AND EXISTS ${FFMPEG_DIR}/lib/libswresample.a)
+    foreach(lib avformat avcodec swresample avutil)
         add_library(${lib} STATIC IMPORTED)
         set_target_properties(${lib} PROPERTIES IMPORTED_LOCATION ${FFMPEG_DIR}/lib/lib${lib}.a)
     endforeach()
     target_compile_definitions(allmeyn_usb PRIVATE HAVE_FFMPEG=1)
     target_include_directories(allmeyn_usb PRIVATE ${FFMPEG_DIR}/include)
     target_link_libraries(allmeyn_usb PRIVATE avformat avcodec avutil)
-    # Keep FFmpeg's symbols private: the Media3 FFmpeg extension ships its own copy.
+    # Keep FFmpeg's symbols private to each library.
     target_link_options(allmeyn_usb PRIVATE "-Wl,--exclude-libs,ALL")
-    message(STATUS "FFmpeg found for ${ANDROID_ABI}: APE/WavPack enabled")
+
+    # Media3's FFmpeg audio decoder (vendored, see media3_ffmpeg/README.vendored) on the same
+    # FFmpeg: FLAC, ALAC, MP3, AAC, AC-3, E-AC-3, DTS, MLP, TrueHD. Its Java side loads "ffmpegJNI".
+    # A library of its own so its JNI_OnLoad can never stop the USB driver from loading.
+    add_library(ffmpegJNI SHARED media3_ffmpeg/ffmpeg_jni.cc)
+    target_include_directories(ffmpegJNI PRIVATE ${FFMPEG_DIR}/include)
+    target_link_libraries(ffmpegJNI PRIVATE android log swresample avcodec avutil m)
+    target_link_options(ffmpegJNI PRIVATE "-Wl,--exclude-libs,ALL")
+    if(ANDROID_ABI STREQUAL "arm64-v8a")
+        target_link_options(ffmpegJNI PRIVATE "-Wl,-Bsymbolic")  # as upstream
+    endif()
+    message(STATUS "FFmpeg found for ${ANDROID_ABI}: APE/WavPack and the Media3 FFmpeg decoder enabled")
 else()
-    message(WARNING "FFmpeg not built for ${ANDROID_ABI} (run scripts/build-ffmpeg.sh): APE/WavPack disabled")
+    message(WARNING "FFmpeg not built for ${ANDROID_ABI} (run scripts/build-ffmpeg.sh): APE/WavPack and the FFmpeg decoder disabled (Media3 falls back to MediaCodec)")
 endif()

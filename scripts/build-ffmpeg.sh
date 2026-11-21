@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds a minimal static FFmpeg (APE + WavPack decoding only, LGPL) for the app's Android ABIs.
+# Builds a minimal static FFmpeg (audio decoding only, LGPL) for the app's Android ABIs: APE and
+# WavPack for our own decoder, and the codecs Media3's FFmpeg decoder (libffmpegJNI) handles.
 #
 #   scripts/build-ffmpeg.sh <android-ndk-dir> [ffmpeg-source-dir]
 #
@@ -23,12 +24,16 @@ case "$(uname -s)" in Darwin) HOST_TAG="darwin-x86_64" ;; esac
 TC="$NDK/toolchains/llvm/prebuilt/$HOST_TAG"
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 
-# Everything off, then only what APE/WavPack decoding needs. No GPL components.
+# Everything off, then only what decoding needs. No GPL components (no --enable-gpl).
+#  - demuxers ape,wv + decoders ape,wavpack: our APE/WavPack decoder (decoder/ffdec.c)
+#  - the other decoders + swresample: Media3's FFmpeg audio decoder (media3_ffmpeg/), the same
+#    codec list as the Jellyfin build it replaces (Media3's own extractors feed it packets)
+MEDIA3_DECODERS=flac,alac,pcm_mulaw,pcm_alaw,mp3,aac,ac3,eac3,dca,mlp,truehd
 COMMON_FLAGS=(
   --disable-everything --disable-programs --disable-doc --disable-network --disable-autodetect
-  --disable-avdevice --disable-swscale --disable-swresample --disable-avfilter --disable-postproc
-  --enable-avformat --enable-avcodec --enable-avutil
-  --enable-demuxer=ape,wv --enable-decoder=ape,wavpack
+  --disable-avdevice --disable-swscale --disable-avfilter --disable-postproc --disable-symver
+  --enable-avformat --enable-avcodec --enable-avutil --enable-swresample
+  --enable-demuxer=ape,wv --enable-decoder=ape,wavpack,$MEDIA3_DECODERS
   --enable-pic --enable-static --disable-shared
 )
 

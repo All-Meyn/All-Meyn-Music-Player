@@ -47,7 +47,9 @@ jobs:
       - name: Check FFmpeg is present for every ABI
         run: |
           for abi in arm64-v8a armeabi-v7a x86_64; do
-            test -f "app/src/main/cpp/ffmpeg/$abi/lib/libavformat.a" || { echo "missing FFmpeg for $abi"; exit 1; }
+            for lib in avformat avcodec swresample avutil; do
+              test -f "app/src/main/cpp/ffmpeg/$abi/lib/lib$lib.a" || { echo "missing lib$lib for $abi"; exit 1; }
+            done
           done
 
       - uses: gradle/actions/setup-gradle@v5
@@ -55,7 +57,7 @@ jobs:
       - name: Build debug APK, unit tests, lint
         run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug
 
-      - name: Check APE/WavPack decoders are linked into the APK
+      - name: Check the FFmpeg decoders are linked into the APK
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
           for abi in arm64-v8a armeabi-v7a x86_64; do
@@ -67,6 +69,16 @@ jobs:
               grep -qa "$name" "$SO" || { echo "$abi: '$name' codec not found"; exit 1; }
             done
             echo "$abi: APE + WavPack decoders linked ($(stat -c %s "$SO") bytes)"
+            # Media3's FFmpeg decoder, built on the same FFmpeg (replaces the Jellyfin prebuilt).
+            JNI="$(mktemp)"
+            unzip -p "$APK" "lib/$abi/libffmpegJNI.so" > "$JNI" || { echo "$abi: libffmpegJNI.so missing"; exit 1; }
+            for name in "FLAC (Free Lossless Audio Codec)" "ALAC (Apple Lossless Audio Codec)" "MP3 (MPEG audio layer 3)" "AAC (Advanced Audio Coding)"; do
+              grep -qa "$name" "$JNI" || { echo "$abi: '$name' missing from libffmpegJNI.so"; exit 1; }
+            done
+            # Ours, not the old Jellyfin prebuilt (same file name, FFmpeg 6.0): the version string.
+            WANT="$(sed -n 's/^FFMPEG_TAG="n\([^"]*\)".*/\1/p' scripts/build-ffmpeg.sh)"  # e.g. 7.1.5
+            grep -qa "$WANT" "$JNI" || { echo "$abi: libffmpegJNI.so isn't FFmpeg $WANT"; exit 1; }
+            echo "$abi: Media3 FFmpeg decoder linked, FFmpeg $WANT ($(stat -c %s "$JNI") bytes)"
           done
 
       - uses: actions/upload-artifact@v6

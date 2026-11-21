@@ -1,0 +1,11 @@
+Media3 FFmpeg audio decoder, from androidx/media tag 1.9.3 (https://github.com/androidx/media),
+libraries/decoder_ffmpeg. Apache License 2.0 (header in each file). Unmodified.
+
+  app/src/main/cpp/media3_ffmpeg/ffmpeg_jni.cc        <- src/main/jni/ffmpeg_jni.cc
+  app/src/main/java/androidx/media3/decoder/ffmpeg/   <- src/main/java/... (audio classes only;
+                                                         ExperimentalFfmpegVideoRenderer left out)
+
+Built by app/src/main/cpp/CMakeLists.txt as libffmpegJNI.so against the app's own FFmpeg
+(scripts/build-ffmpeg.sh), replacing the prebuilt org.jellyfin.media3:media3-ffmpeg-decoder, whose
+latest release (1.9.0+1) bundles FFmpeg from the 6.0 branch. Keep the version equal to the app's
+Media3 version (gradle/libs.versions.toml) and re-copy these files when Media3 is updated.
