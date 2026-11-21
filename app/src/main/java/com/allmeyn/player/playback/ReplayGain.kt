@@ -5,14 +5,23 @@ import androidx.media3.common.Metadata
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.extractor.metadata.id3.InternalFrame
 import androidx.media3.extractor.metadata.id3.TextInformationFrame
+import androidx.media3.common.C
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import kotlin.math.pow
+import kotlin.math.roundToInt
+import kotlin.math.roundToLong
 
 /**
- * ReplayGain: evens out loudness between songs by turning the player volume down by the gain in
- * the file's tags. Only lowers volume (never boosts, so it can't clip).
+ * ReplayGain: evens out loudness between songs by scaling their samples down by the gain in the
+ * file's tags. Only lowers volume (never boosts, so it can't clip).
  *
- * It's applied as the player's volume, which only Android outputs (AudioTrack) use. The USB
- * driver ignores player volume, so bit-perfect playback is never touched.
+ * Applied to the samples themselves, from each song's first sample (so a song change switches
+ * gain exactly at the join), and only for Android output: never while the bit-perfect USB driver
+ * is on, and never to DoP / native DSD.
+ * - Formats Media3 reads tags from (FLAC, MP3, Ogg, M4A, ...): in CaptureAudioSink, from the
+ *   format Media3 configures for each song.
+ * - Formats we decode (APE, WavPack, DSD -> PCM): in DecodingDataSource, from the file's tags.
  *
  * Tag sources: Vorbis comments (FLAC, Ogg; Opus R128_*_GAIN), ID3 TXXX (MP3, DSF, DFF), iTunes
  * freeform atoms (M4A), APEv2 (APE, WavPack). Pure parsing here; unit-tested.
@@ -82,10 +91,51 @@ object ReplayGain {
     fun mode(context: Context): Mode =
         runCatching { Mode.valueOf(prefs(context).getString(KEY_MODE, Mode.OFF.name)!!) }.getOrDefault(Mode.OFF)
 
-    fun setMode(context: Context, mode: Mode) = prefs(context).edit().putString(KEY_MODE, mode.name).apply()
+    fun setMode(context: Context, mode: Mode) {
+        liveMode = mode
+        prefs(context).edit().putString(KEY_MODE, mode.name).apply()
+    }
+
+    /** The current mode, readable from the playback thread. Set by [init] and [setMode]. */
+    @Volatile var liveMode: Mode = Mode.OFF
+        private set
+
+    fun init(context: Context) {
+        liveMode = mode(context)
+    }
+
+    /**
+     * Multiplies the PCM samples in [buf] (position..limit, little-endian) by [gain], in place.
+     * [encoding] is a Media3 C.ENCODING_PCM_* constant; others are left alone. Rounds, no dither.
+     */
+    fun scale(buf: ByteBuffer, encoding: Int, gain: Float) {
+        if (gain >= 1f || buf.isReadOnly) return
+        val b = buf.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+        val end = buf.limit()
+        var i = buf.position()
+        when (encoding) {
+            C.ENCODING_PCM_16BIT -> while (i + 2 <= end) {
+                b.putShort(i, (b.getShort(i) * gain).roundToInt().coerceIn(-32768, 32767).toShort()); i += 2
+            }
+            C.ENCODING_PCM_24BIT -> while (i + 3 <= end) {
+                val v = (b.get(i).toInt() and 0xFF) or ((b.get(i + 1).toInt() and 0xFF) shl 8) or (b.get(i + 2).toInt() shl 16)
+                val s = (v * gain).roundToInt().coerceIn(-8_388_608, 8_388_607)
+                b.put(i, s.toByte()); b.put(i + 1, (s shr 8).toByte()); b.put(i + 2, (s shr 16).toByte()); i += 3
+            }
+            C.ENCODING_PCM_32BIT -> while (i + 4 <= end) {
+                b.putInt(i, (b.getInt(i) * gain.toDouble()).roundToLong().coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()); i += 4
+            }
+            C.ENCODING_PCM_FLOAT -> while (i + 4 <= end) {
+                b.putFloat(i, b.getFloat(i) * gain); i += 4
+            }
+        }
+    }
 
     const val KEY = KEY_MODE
 
-    /** e.g. "-6.2 dB (album)", or null when nothing is applied. Set by PlaybackService. */
+    /** e.g. "-6.2 dB (album)", or null when off. Set by PlaybackService for the UI. */
     @Volatile var applied: String? = null
+
+    /** Gains of files our decoders opened (by URI), for the UI label. */
+    val decodedGains = java.util.concurrent.ConcurrentHashMap<String, Gains>()
 }

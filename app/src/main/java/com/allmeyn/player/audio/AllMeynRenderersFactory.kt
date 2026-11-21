@@ -41,7 +41,7 @@ class AllMeynRenderersFactory(
             .setEnableAudioOutputPlaybackParameters(enableAudioTrackPlaybackParams)
             .setAudioOutputProvider(UsbAudioOutputProvider(context, usbDriver))
             .build()
-        return CaptureAudioSink(sink, usbDac::onPcmConfigured)
+        return CaptureAudioSink(sink, usbDac::onPcmConfigured) { usbDriver.isActive }
     }
 
     companion object {

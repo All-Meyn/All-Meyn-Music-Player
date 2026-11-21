@@ -5,6 +5,7 @@ import androidx.media3.common.util.UnstableApi
 import com.allmeyn.player.audio.AllMeynRenderersFactory
 import com.allmeyn.player.library.MusicLibrary
 import com.allmeyn.player.library.PlaylistStore
+import com.allmeyn.player.playback.ReplayGain
 import com.allmeyn.player.plugin.LevelMeterPlugin
 import com.allmeyn.player.plugin.PluginHost
 import com.allmeyn.player.usb.UsbAudioDriver
@@ -30,6 +31,7 @@ class AllMeynApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        ReplayGain.init(this)
         usbDac = UsbDacManager(this, AllMeynRenderersFactory.FLOAT_OUTPUT).also { it.start() }
         PluginHost.register(levelMeter)
         // Re-enable the USB driver now if it was left on and the DAC is already plugged in.

@@ -2,13 +2,19 @@ package com.allmeyn.player.decode
 
 import android.net.Uri
 import androidx.media3.common.C
+import com.allmeyn.player.playback.ReplayGain
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * How DSD may leave the decoder: as native DSD up to [nativeMaxRate] Hz of DSD (0 = not at all),
- * otherwise as DoP if [dop], otherwise as PCM.
+ * How decoded audio may leave the decoder. DSD: as native DSD up to [nativeMaxRate] Hz of DSD
+ * (0 = not at all), otherwise as DoP if [dop], otherwise as PCM. [replayGain]: scale PCM output
+ * by the file's ReplayGain (only when it's going to an Android output; OFF otherwise).
  */
-data class DsdOutput(val dop: Boolean, val nativeMaxRate: Int = 0)
+data class DsdOutput(
+    val dop: Boolean,
+    val nativeMaxRate: Int = 0,
+    val replayGain: ReplayGain.Mode = ReplayGain.Mode.OFF,
+)
 
 /** What the decoders are doing, for the UI, the plugin tap, the output and the playback service. */
 object DecodeRegistry {
