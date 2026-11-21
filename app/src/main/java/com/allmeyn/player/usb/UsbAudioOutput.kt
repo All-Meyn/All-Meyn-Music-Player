@@ -67,7 +67,10 @@ class UsbAudioOutput(
     }
 
     /** End of stream: the queue keeps draining; nothing else to do. */
-    override fun stop() {}
+    // Media3 calls stop() when it plays out the end of the queue (like AudioTrack.stop()).
+    override fun stop() {
+        if (isCurrent) NativeUsb.endOfStream()
+    }
 
     override fun release() {
         if (released) return

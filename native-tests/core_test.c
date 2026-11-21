@@ -51,6 +51,28 @@ int main(void) {
     // wrong slot layout is refused rather than garbled
     assert(ring_write_converted(&d, dsd, 8, IN_DSD_NATIVE, 4, 3, 2) == 0);
     ring_free(&d);
+    // 7. underrun counting: only gaps after audio was flowing, once per gap, not while draining
+    UnderrunState u = {0};
+    assert(underrun_note(&u, 0) == 0);             // start: ring still filling, not a dropout
+    assert(underrun_note(&u, 0) == 0);
+    assert(underrun_note(&u, 1) == 0);             // audio flowing
+    assert(underrun_note(&u, 1) == 0);
+    assert(underrun_note(&u, 0) == 1);             // real dropout
+    assert(underrun_note(&u, 0) == 0);             // same gap counts once
+    assert(underrun_note(&u, 1) == 0);
+    assert(underrun_note(&u, 0) == 1);             // a second gap counts again
+    assert(underrun_note(&u, 1) == 0);
+    underrun_restart(&u);                          // seek / flush / pause
+    assert(underrun_note(&u, 0) == 0);             // refilling after the seek isn't a dropout
+    assert(underrun_note(&u, 1) == 0);
+    underrun_end_of_stream(&u);                    // playing out the end of the queue
+    assert(underrun_note(&u, 1) == 0);
+    assert(underrun_note(&u, 0) == 0);             // running dry at the end isn't a dropout
+    assert(underrun_note(&u, 1) == 0);             // still draining: doesn't re-arm
+    assert(underrun_note(&u, 0) == 0);
+    underrun_restart(&u);                          // next playback
+    assert(underrun_note(&u, 1) == 0);
+    assert(underrun_note(&u, 0) == 1);
     puts("core tests passed");
     return 0;
 }

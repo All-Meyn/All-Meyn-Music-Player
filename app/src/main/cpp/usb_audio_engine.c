@@ -80,6 +80,7 @@ struct Engine {
 
     // ---- stats ----
     atomic_ulong packets_sent, fb_count, errors, underruns;
+    UnderrunState ur;            // which short packets count as underruns (mid-stream dropouts only)
     char last_error[160];
 };
 
@@ -118,7 +119,7 @@ static int fill_packet(Engine *e, uint8_t *buf, uint32_t *ring_frames_out) {
         } else {
             got = (int) ring_read(&e->ring, buf, (uint32_t) frames);
             *ring_frames_out += (uint32_t) got;
-            if (got < frames) atomic_fetch_add(&e->underruns, 1);
+            if (underrun_note(&e->ur, got == frames)) atomic_fetch_add(&e->underruns, 1);
         }
     }
     if (got < frames) memset(buf + got * e->frame_bytes, atomic_load(&e->idle_byte), (size_t) (frames - got) * e->frame_bytes);
@@ -296,6 +297,7 @@ static int stream_start(Engine *e) {
 
 static void reset_position(Engine *e) {
     atomic_store(&e->playing, 0);
+    underrun_restart(&e->ur);
     ring_flush(&e->ring);
     atomic_fetch_add(&e->gen, 1);
     atomic_store(&e->played_frames, 0);
@@ -435,7 +437,18 @@ JNIEXPORT void JNICALL JNI_FN(play)(JNIEnv *env, jclass clazz) {
 JNIEXPORT void JNICALL JNI_FN(pause)(JNIEnv *env, jclass clazz) {
     (void) env; (void) clazz;
     pthread_mutex_lock(&g_lock);
-    if (g) atomic_store(&g->playing, 0);
+    if (g) {
+        atomic_store(&g->playing, 0);
+        underrun_restart(&g->ur);
+    }
+    pthread_mutex_unlock(&g_lock);
+}
+
+/** The player is playing out the end of the queue: the ring running dry now isn't a dropout. */
+JNIEXPORT void JNICALL JNI_FN(endOfStream)(JNIEnv *env, jclass clazz) {
+    (void) env; (void) clazz;
+    pthread_mutex_lock(&g_lock);
+    if (g) underrun_end_of_stream(&g->ur);
     pthread_mutex_unlock(&g_lock);
 }
 
@@ -507,7 +520,7 @@ JNIEXPORT jstring JNICALL JNI_FN(status)(JNIEnv *env, jclass clazz) {
     } else {
         snprintf(msg, sizeof(msg),
                  "%s · %s · %d Hz · %d-bit slot · alt %d%s\n"
-                 "buffer %u/%u fr · played %llu fr · feedback %.4f (nominal %.4f) · underruns %lu · errors %lu",
+                 "buffer %u/%u fr · played %llu fr · feedback %.4f (nominal %.4f) · dropouts %lu · errors %lu",
                  atomic_load(&e->source) == SRC_TONE ? "Tone" : "Music",
                  atomic_load(&e->playing) ? "playing" : "paused",
                  e->rate, e->subslot * 8, e->alt, atomic_load(&e->dead) ? " · DISCONNECTED" : "",

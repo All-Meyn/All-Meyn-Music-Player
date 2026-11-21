@@ -44,6 +44,7 @@ fun NowPlaying(
     driver: UsbAudioDriver.State,
     driverRoute: String,
     gainLabel: String?,
+    dspOn: Boolean,
     onDacVolume: (Int) -> Unit,
 ) {
     Column(
@@ -108,7 +109,8 @@ fun NowPlaying(
         InfoLine("Source", sourceLabel)
         InfoLine(
             "Output",
-            if (driver.active) "${driver.deviceName ?: "USB DAC"} · All-Meyn USB driver · bit-perfect · ${driverRoute.removePrefix("USB driver · ")}"
+            if (driver.active) "${driver.deviceName ?: "USB DAC"} · All-Meyn USB driver · " +
+                (if (dspOn) "DSP on" else "bit-perfect") + " · ${driverRoute.removePrefix("USB driver · ")}"
             else "Android audio",
         )
         if (!driver.active && gainLabel != null) InfoLine("Gain", "ReplayGain $gainLabel")

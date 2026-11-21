@@ -18,6 +18,7 @@ import com.allmeyn.player.audio.AllMeynRenderersFactory
 import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.decode.DecodingDataSource
 import com.allmeyn.player.decode.DsdOutput
+import com.allmeyn.player.dsp.DspSettings
 import com.allmeyn.player.plugin.AudioCapturePlugin
 import com.allmeyn.player.plugin.PluginHost
 import org.junit.Assert.assertEquals
@@ -59,6 +60,19 @@ class DecodedPlaybackTest {
 
     @Test fun wavPack24() = play(asset("clip24.wv"), dop = false, rate = 44_100, encoding = C.ENCODING_PCM_24BIT)
 
+    /** DSP on: integer audio (converted to float for the chain) and float audio (in place). */
+    @Test fun dspOnIntegerAndFloatAudio() {
+        DspSettings.update(context) {
+            it.copy(enabled = true, companderOn = true, bassOn = true, impactOn = true, expansionPercent = -30f, softClip = true)
+        }
+        try {
+            play(asset("clip16.ape"), dop = false, rate = 44_100, encoding = C.ENCODING_PCM_16BIT, expectDsp = true)
+            play(dsdFile("t4.dsf", dff = false), dop = false, rate = 176_400, encoding = C.ENCODING_PCM_FLOAT, expectDsp = true)
+        } finally {
+            DspSettings.update(context) { com.allmeyn.player.dsp.DspParams() }
+        }
+    }
+
     /**
      * Native DSD through Media3: 4-channel 16-bit at DSD rate / 32. Checks every byte Media3 hands
      * the sink is the file's DSD, untouched (oldest byte first per channel). The Android output
@@ -92,7 +106,10 @@ class DecodedPlaybackTest {
         }
     }
 
-    private fun play(file: File, dop: Boolean, rate: Int, encoding: Int, nativeMaxRate: Int = 0, channels: Int = 2) {
+    private fun play(
+        file: File, dop: Boolean, rate: Int, encoding: Int, nativeMaxRate: Int = 0, channels: Int = 2,
+        expectDsp: Boolean = false,
+    ) {
         lateinit var player: ExoPlayer
         val ready = CountDownLatch(1)
         var error: PlaybackException? = null
@@ -129,10 +146,23 @@ class DecodedPlaybackTest {
             assertEquals(nativeMaxRate > 0, DecodeRegistry.nativeActive)
 
             sync { player.play() }
-            Thread.sleep(1200)
+            // Wait for playback to get going: a cold emulator can take a while to start the first
+            // track (one CI run reached only 377 ms after 1.2 s), so poll instead of a fixed sleep.
             var pos = 0L
-            sync { pos = player.currentPosition; assertNull(player.playerError) }
+            val deadline = System.currentTimeMillis() + 5000
+            while (true) {
+                Thread.sleep(200)
+                sync { pos = player.currentPosition; assertNull(player.playerError) }
+                if (pos > 400 || System.currentTimeMillis() > deadline) break
+            }
             assertTrue("${file.name}: position didn't advance ($pos ms)", pos > 400)
+            if (expectDsp) {
+                val m = DspSettings.meters
+                assertTrue("${file.name}: DSP chain didn't run", m != null)
+                assertTrue("${file.name}: DSP output peak ${m!!.outputPeak}", m.outputPeak > 0f && m.outputPeak <= 1f)
+            } else {
+                assertNull("${file.name}: DSP ran while off", DspSettings.meters)
+            }
 
             sync { player.seekTo(1000) }
             Thread.sleep(600)

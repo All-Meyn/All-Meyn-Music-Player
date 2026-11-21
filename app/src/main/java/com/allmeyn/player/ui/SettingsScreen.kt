@@ -63,6 +63,8 @@ fun SettingsScreen(
     onAutoForDsd: (Boolean) -> Unit,
     replayGain: ReplayGain.Mode,
     onReplayGain: (ReplayGain.Mode) -> Unit,
+    dspOn: Boolean,
+    onOpenDsp: () -> Unit,
     onProbe: ((String) -> Unit) -> Unit,
     onTone: (Int, Int) -> Unit,
     pluginName: String,
@@ -95,6 +97,16 @@ fun SettingsScreen(
 
         // ---- Output
         Section("Playback") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("DSP", fontWeight = FontWeight.Medium)
+                    Text(
+                        if (dspOn) "On: compressor/expander, bass and impact restoration" else "Off (bit-perfect)",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                OutlinedButton(onClick = onOpenDsp) { Text("Open") }
+            }
             Text("ReplayGain", fontWeight = FontWeight.Medium)
             Text(
                 "Evens out loudness between songs using their ReplayGain tags (only turns down). " +
