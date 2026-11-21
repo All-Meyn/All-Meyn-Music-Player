@@ -58,6 +58,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
@@ -229,6 +230,8 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     val sourceLabel = decoderLabel ?: pluginFormat.takeIf { it != "—" }.orEmpty()
     val route = driverStatus.lineSequence().firstOrNull { it.startsWith("Player output:") }?.substringAfter(": ").orEmpty()
 
+    ArtBackdrop(player.artPath)
+
     pendingAdd?.let { songs ->
         AddToPlaylistDialog(
             tracks = songs,
@@ -241,6 +244,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
 
     CompositionLocalProvider(LocalAddToPlaylist provides { pendingAdd = it }) {
     Scaffold(
+        containerColor = Color.Transparent, // the blurred cover (or the plain surface) shows through
         topBar = {
             TopAppBar(
                 title = {
