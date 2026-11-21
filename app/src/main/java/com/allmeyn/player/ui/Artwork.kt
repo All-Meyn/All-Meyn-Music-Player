@@ -1,5 +1,6 @@
 package com.allmeyn.player.ui
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
@@ -65,16 +66,18 @@ fun Artwork(path: String, modifier: Modifier = Modifier, corner: Dp = 8.dp) {
  * it). Blurred once in software at 48 px and stretched with smooth filtering, so it looks the same
  * on every Android version and costs nothing per frame. A scrim in the surface colour keeps text
  * readable; it fades between songs. Nothing is drawn while nothing plays or a song has no cover.
+ * [strength] 0–100 (Settings → Appearance): how much of the cover shows through the scrim; 0 = none.
  */
 @Composable
-fun ArtBackdrop(path: String, modifier: Modifier = Modifier) {
+fun ArtBackdrop(path: String, strength: Int, modifier: Modifier = Modifier) {
     val blurred by produceState(initialValue = path.takeIf { it.isNotEmpty() }?.let { BackdropMemory.cache.get(it) }, path) {
         if (path.isEmpty()) { value = null; return@produceState }
         value = BackdropMemory.cache.get(path) ?: withContext(Dispatchers.IO) {
             blurredThumbnail(path)?.also { BackdropMemory.cache.put(path, it) }
         }
     }
-    val scrim = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+    if (strength <= 0) return
+    val scrim = MaterialTheme.colorScheme.surface.copy(alpha = 1f - strength.coerceAtMost(100) / 100f)
     Crossfade(targetState = blurred, animationSpec = tween(600), modifier = modifier.fillMaxSize(), label = "backdrop") { b ->
         if (b != null) {
             Box(Modifier.fillMaxSize()) {
@@ -85,6 +88,16 @@ fun ArtBackdrop(path: String, modifier: Modifier = Modifier) {
                 Box(Modifier.fillMaxSize().background(scrim))
             }
         }
+    }
+}
+
+/** Settings → Appearance → Background art, 0–100 %. Its own prefs file; nothing else reads it. */
+object BackdropSettings {
+    const val DEFAULT = 40 // = the original 60 % scrim
+    private fun prefs(context: Context) = context.getSharedPreferences("appearance", Context.MODE_PRIVATE)
+    fun strength(context: Context): Int = prefs(context).getInt("backdrop_strength", DEFAULT).coerceIn(0, 100)
+    fun setStrength(context: Context, value: Int) {
+        prefs(context).edit().putInt("backdrop_strength", value.coerceIn(0, 100)).apply()
     }
 }
 

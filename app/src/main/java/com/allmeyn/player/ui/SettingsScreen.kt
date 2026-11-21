@@ -63,6 +63,8 @@ fun SettingsScreen(
     onAutoForDsd: (Boolean) -> Unit,
     replayGain: ReplayGain.Mode,
     onReplayGain: (ReplayGain.Mode) -> Unit,
+    backdropStrength: Int,
+    onBackdropStrength: (Int) -> Unit,
     dspOn: Boolean,
     onOpenDsp: () -> Unit,
     onProbe: ((String) -> Unit) -> Unit,
@@ -122,6 +124,23 @@ fun SettingsScreen(
                     )
                 }
             }
+        }
+        Section("Appearance") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Background art", Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                Text(if (backdropStrength == 0) "Off" else "$backdropStrength %", color = MaterialTheme.colorScheme.primary)
+            }
+            Text(
+                "How strongly the playing song's blurred cover shows behind the app. 0 % = plain background.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            // Live while dragging; saved only when the 5 % step changes.
+            Slider(
+                value = backdropStrength.toFloat(),
+                onValueChange = { v -> (v / 5f).roundToInt().times(5).let { if (it != backdropStrength) onBackdropStrength(it) } },
+                valueRange = 0f..100f,
+                steps = 19,
+            )
         }
         Section("Output") {
             if (driver.active) {
