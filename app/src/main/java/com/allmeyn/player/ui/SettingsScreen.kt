@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,7 +76,8 @@ fun SettingsScreen(
     peak: Float,
 ) {
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(bottom = LocalBottomBarPadding.current).padding(16.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState())
+            .padding(bottom = LocalBottomBarPadding.current).padding(horizontal = sideInset()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         // ---- Library
@@ -92,7 +94,7 @@ fun SettingsScreen(
                 OutlinedButton(onClick = onRescan, enabled = !library.scanning && library.folders.isNotEmpty()) { Text("Rescan") }
             }
             Text(
-                if (library.scanning) library.progress else "${countOf(library.tracks.size, "track")} · ${countOf(library.albums.size, "album")}",
+                if (library.scanning) library.progress else "${countOf(library.tracks.size, "song")} · ${countOf(library.albums.size, "album")}",
                 style = MaterialTheme.typography.bodySmall,
             )
         }
@@ -202,7 +204,7 @@ fun SettingsScreen(
 
         // ---- Diagnostics
         Section("USB diagnostics") {
-            var probe by remember { mutableStateOf("") }
+            var probe by rememberSaveable { mutableStateOf("") }
             if (driverStatus.isNotEmpty()) {
                 Text(driverStatus, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
             }
@@ -228,7 +230,10 @@ fun SettingsScreen(
             LinearProgressIndicator(progress = { peak }, modifier = Modifier.fillMaxWidth())
         }
 
-        Text("All-Meyn Player ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall)
+        Text(
+            "All-Meyn Player ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.CenterHorizontally),
+        )
     }
 }
 

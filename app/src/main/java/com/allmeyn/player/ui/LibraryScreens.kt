@@ -7,16 +7,17 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.GridItemSpan
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -37,8 +38,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.allmeyn.player.library.Album
 import com.allmeyn.player.library.Artist
@@ -51,39 +54,81 @@ private fun listPadding() = belowBars(bottom = 8.dp)
 
 @Composable
 fun EmptyLibrary(scanning: Boolean, progress: String, onAddFolder: () -> Unit) {
-    Column(
-        Modifier.fillMaxSize().padding(bottom = LocalBottomBarPadding.current).padding(32.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Icon(PlayerIcons.Note, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
-        Spacer(Modifier.height(16.dp))
-        if (scanning) {
-            Text("Scanning your music…", style = MaterialTheme.typography.titleMedium)
-            Text(progress, style = MaterialTheme.typography.bodySmall)
-        } else {
-            Text("Add your music folder", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Pick the folder that holds your music (e.g. Music). All-Meyn scans it, including DSF, DFF, APE and WavPack.",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.padding(vertical = 8.dp),
-            )
-            Button(onClick = onAddFolder) { Text("Choose folder") }
-        }
+    if (scanning) {
+        EmptyState(PlayerIcons.Note, "Scanning your music…", progress)
+    } else {
+        EmptyState(
+            PlayerIcons.Note, "Add your music folder",
+            "Pick the folder that holds your music (e.g. Music). All-Meyn scans it, including DSF, DFF, APE and WavPack.",
+            action = "Choose folder", onAction = onAddFolder,
+        )
     }
 }
 
+/**
+ * The header of an album, artist or playlist: cover, title, a subtitle and a metadata line.
+ * The cover grows on wide screens and shrinks on sideways phones.
+ */
 @Composable
-fun AlbumsGrid(albums: List<Album>, onOpen: (Album) -> Unit) {
+fun DetailHeader(
+    art: String,
+    title: String,
+    subtitle: String,
+    meta: String,
+    round: Boolean = false,
+    sidePadding: Dp = 16.dp,
+    trailing: (@Composable () -> Unit)? = null,
+) {
+    val window = LocalWindowSize.current
+    val size = when {
+        window.short -> 112.dp
+        window.wide -> 200.dp
+        else -> 140.dp
+    }
+    Row(Modifier.fillMaxWidth().padding(horizontal = sidePadding, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+        Artwork(art, Modifier.size(size), corner = if (round) size / 2 else 8.dp)
+        Column(Modifier.weight(1f).padding(start = 16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (meta.isNotBlank()) {
+                Text(meta, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 2.dp))
+            }
+        }
+        trailing?.invoke()
+    }
+}
+
+/** Play and Shuffle for a list of songs, the same on every screen; [extra] adds buttons after them. */
+@Composable
+fun PlayShuffleRow(tracks: List<Track>, player: PlayerUi, sidePadding: Dp = 16.dp, extra: @Composable RowScope.() -> Unit = {}) {
+    Row(
+        Modifier.padding(start = sidePadding, end = sidePadding, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Button(onClick = { player.playTracks(tracks, 0) }, enabled = tracks.isNotEmpty()) {
+            Icon(PlayerIcons.Play, null); Text("Play", Modifier.padding(start = 4.dp))
+        }
+        OutlinedButton(onClick = { player.shuffleTracks(tracks) }, enabled = tracks.isNotEmpty()) {
+            Icon(PlayerIcons.Shuffle, null); Text("Shuffle", Modifier.padding(start = 4.dp))
+        }
+        extra()
+    }
+}
+
+/** Album covers in a grid that adds columns as the screen widens; [header] scrolls with it. */
+@Composable
+fun AlbumsGrid(albums: List<Album>, header: (@Composable () -> Unit)? = null, onOpen: (Album) -> Unit) {
     LazyVerticalGrid(
         columns = GridCells.Adaptive(150.dp),
-        contentPadding = belowBars(12.dp, 12.dp, 12.dp, 12.dp),
+        contentPadding = belowBars(12.dp, 12.dp, 12.dp, 12.dp, fullWidth = true),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
+        if (header != null) item(key = "header", span = { GridItemSpan(maxLineSpan) }) { header() }
         items(albums, key = { it.key }) { album ->
-            Column(Modifier.clickable { onOpen(album) }) {
+            Column(Modifier.clip(RoundedCornerShape(8.dp)).clickable { onOpen(album) }) {
                 Artwork(album.art, Modifier.fillMaxWidth().aspectRatio(1f))
                 Text(album.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
                 Text(album.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
@@ -96,31 +141,19 @@ fun AlbumsGrid(albums: List<Album>, onOpen: (Album) -> Unit) {
 fun AlbumDetail(album: Album, playingUri: String, player: PlayerUi) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = listPadding()) {
         item {
-            Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                Artwork(album.art, Modifier.size(140.dp))
-                Column(Modifier.padding(start = 16.dp)) {
-                    Text(album.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    Text(album.artist, style = MaterialTheme.typography.titleSmall)
-                    val meta = listOfNotNull(
-                        album.year.takeIf { it > 0 }?.toString(),
-                        countOf(album.tracks.size, "track"),
-                        formatTime(album.durationMs),
-                        album.tracks.first().qualityLabel,
-                    )
-                    Text(meta.joinToString(" · "), style = MaterialTheme.typography.bodySmall)
-                }
-            }
-            Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { player.playTracks(album.tracks, 0) }) {
-                    Icon(PlayerIcons.Play, null); Text("Play", Modifier.padding(start = 4.dp))
-                }
-                OutlinedButton(onClick = { player.shuffleTracks(album.tracks) }) {
-                    Icon(PlayerIcons.Shuffle, null); Text("Shuffle", Modifier.padding(start = 4.dp))
-                }
-                val addToPlaylist = LocalAddToPlaylist.current
+            DetailHeader(
+                album.art, album.title, album.artist,
+                listOfNotNull(
+                    album.year.takeIf { it > 0 }?.toString(),
+                    countOf(album.tracks.size, "song"),
+                    formatTime(album.durationMs),
+                    album.tracks.firstOrNull()?.qualityLabel,
+                ).joinToString(" · "),
+            )
+            val addToPlaylist = LocalAddToPlaylist.current
+            PlayShuffleRow(album.tracks, player) {
                 IconButton(onClick = { addToPlaylist(album.tracks) }) { Icon(PlayerIcons.PlaylistAdd, "Add album to playlist") }
             }
-            Spacer(Modifier.height(8.dp))
         }
         itemsIndexed(album.tracks, key = { _, t -> t.uri }) { i, t ->
             TrackRow(
@@ -138,13 +171,13 @@ fun ArtistsList(artists: List<Artist>, onOpen: (Artist) -> Unit) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = listPadding()) {
         items(artists, key = { it.name.lowercase() }) { a ->
             Row(
-                Modifier.fillMaxWidth().clickable { onOpen(a) }.padding(horizontal = 16.dp, vertical = 10.dp),
+                Modifier.fillMaxWidth().clickable { onOpen(a) }.padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Artwork(a.albums.firstOrNull { it.art.isNotEmpty() }?.art.orEmpty(), Modifier.size(52.dp), corner = 26.dp)
                 Column(Modifier.padding(start = 12.dp)) {
                     Text(a.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${countOf(a.albums.size, "album")} · ${countOf(a.trackCount, "track")}", style = MaterialTheme.typography.bodySmall)
+                    Text("${countOf(a.albums.size, "album")} · ${countOf(a.trackCount, "song")}", style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -153,15 +186,22 @@ fun ArtistsList(artists: List<Artist>, onOpen: (Artist) -> Unit) {
 
 @Composable
 fun ArtistDetail(artist: Artist, onOpen: (Album) -> Unit, player: PlayerUi) {
-    Column(Modifier.fillMaxSize()) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(artist.name, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-            OutlinedButton(onClick = { player.shuffleTracks(artist.albums.flatMap { it.tracks }) }) {
-                Icon(PlayerIcons.Shuffle, null); Text("Shuffle", Modifier.padding(start = 4.dp))
+    val all = remember(artist) { artist.albums.flatMap { it.tracks } }
+    AlbumsGrid(
+        artist.albums,
+        header = {
+            // The grid already pads its sides: the header lines up with the covers.
+            Column {
+                DetailHeader(
+                    artist.albums.firstOrNull { it.art.isNotEmpty() }?.art.orEmpty(), artist.name, "",
+                    "${countOf(artist.albums.size, "album")} · ${countOf(artist.trackCount, "song")}",
+                    round = true, sidePadding = 0.dp,
+                )
+                PlayShuffleRow(all, player, sidePadding = 0.dp)
             }
-        }
-        AlbumsGrid(artist.albums, onOpen)
-    }
+        },
+        onOpen = onOpen,
+    )
 }
 
 @Composable

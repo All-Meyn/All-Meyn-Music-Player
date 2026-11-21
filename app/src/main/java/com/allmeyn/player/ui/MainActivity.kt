@@ -15,6 +15,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.calculateEndPadding
 import androidx.compose.foundation.layout.calculateStartPadding
 import androidx.compose.foundation.layout.fillMaxSize
@@ -41,13 +44,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -55,13 +58,13 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -73,7 +76,6 @@ import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.allmeyn.player.AllMeynApp
 import com.allmeyn.player.decode.DecodeRegistry
-import com.allmeyn.player.library.Track
 import com.allmeyn.player.playback.PlaybackService
 import com.allmeyn.player.playback.ReplayGain
 import com.allmeyn.player.dsp.DspSettings
@@ -103,7 +105,7 @@ class MainActivity : ComponentActivity() {
         val app = application as AllMeynApp
         // Launched by plugging in the DAC ("Always open All-Meyn"): permission is granted now.
         app.usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
-        setContent { AllMeynTheme { AppRoot(controller, app) } }
+        setContent { AllMeynTheme { ProvideWindowSize { AppRoot(controller, app) } } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -148,28 +150,7 @@ private fun AllMeynTheme(content: @Composable () -> Unit) {
     }
 }
 
-/** How much of the screen's bottom the glass mini player and tab bar cover: lists pad their end by it. */
-val LocalBottomBarPadding = compositionLocalOf { 0.dp }
-
-/** A list's content padding plus [LocalBottomBarPadding], so it scrolls under the bottom bars. */
-@Composable
-fun belowBars(start: Dp = 0.dp, top: Dp = 0.dp, end: Dp = 0.dp, bottom: Dp = 0.dp) =
-    PaddingValues(start, top, end, bottom + LocalBottomBarPadding.current)
-
-private enum class Tab(val label: String) { Albums("Albums"), Artists("Artists"), Tracks("Tracks"), Playlists("Playlists"), Folders("Folders") }
-
-/** Screens pushed on top of the tabs. */
-private sealed interface Route {
-    data class AlbumRoute(val key: String) : Route
-    data class ArtistRoute(val name: String) : Route
-    data class FolderRoute(val path: String) : Route
-    data class PlaylistRoute(val id: String) : Route
-    data object NowPlayingRoute : Route
-    data object QueueRoute : Route
-    data object SearchRoute : Route
-    data object DspRoute : Route
-    data object SettingsRoute : Route
-}
+private enum class Tab(val label: String) { Albums("Albums"), Artists("Artists"), Songs("Songs"), Playlists("Playlists"), Folders("Folders") }
 
 @UnstableApi
 @OptIn(ExperimentalMaterial3Api::class)
@@ -182,14 +163,27 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     val playlists by app.playlists.state.collectAsStateWithLifecycle()
     val byUri = remember(library.tracks) { library.tracks.associateBy { it.uri } }
     val context = LocalContext.current
-    // Songs waiting for the "Add to playlist" dialog.
-    var pendingAdd by remember { mutableStateOf<List<Track>?>(null) }
+    // Songs waiting for the "Add to playlist" dialog, as URIs (one per line) so it survives folding.
+    var pendingAddUris by rememberSaveable { mutableStateOf("") }
+    val pendingAdd = remember(pendingAddUris, byUri) {
+        pendingAddUris.takeIf { it.isNotEmpty() }?.split('\n')?.mapNotNull { byUri[it] }?.takeIf { it.isNotEmpty() }
+    }
     fun added(name: String, n: Int) = Toast.makeText(context, "Added ${countOf(n, "song")} to $name", Toast.LENGTH_SHORT).show()
 
     var tab by rememberSaveable { mutableStateOf(Tab.Albums) }
-    val stack = remember { mutableStateListOf<Route>() }
+    // Saved, so folding, unfolding or rotating keeps the open screen; each screen (and each tab)
+    // keeps its own scroll position and dialogs in the state holder while it is on the stack.
+    val stack = rememberSaveable(saver = RouteStackSaver) { mutableStateListOf<Route>() }
     val top = stack.lastOrNull()
-    BackHandler(enabled = stack.isNotEmpty()) { stack.removeAt(stack.lastIndex) }
+    val screenStates = rememberSaveableStateHolder()
+    fun screenKey(depth: Int, r: Route?) = if (r == null) "tab:${tab.name}" else "$depth:${r.encode()}"
+    fun pop() {
+        if (stack.isEmpty()) return
+        screenStates.removeState(screenKey(stack.size, stack.last()))
+        stack.removeAt(stack.lastIndex)
+    }
+    BackHandler(enabled = stack.isNotEmpty()) { pop() }
+    val window = LocalWindowSize.current
 
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) app.library.addFolder(uri)
@@ -237,13 +231,13 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
         AddToPlaylistDialog(
             tracks = songs,
             playlists = playlists,
-            onAdd = { p -> app.playlists.add(p.id, songs.map { it.uri }); pendingAdd = null; added(p.name, songs.size) },
-            onCreate = { name -> app.playlists.create(name, songs.map { it.uri }); pendingAdd = null; added(name, songs.size) },
-            onDismiss = { pendingAdd = null },
+            onAdd = { p -> app.playlists.add(p.id, songs.map { it.uri }); pendingAddUris = ""; added(p.name, songs.size) },
+            onCreate = { name -> app.playlists.create(name, songs.map { it.uri }); pendingAddUris = ""; added(name, songs.size) },
+            onDismiss = { pendingAddUris = "" },
         )
     }
 
-    CompositionLocalProvider(LocalAddToPlaylist provides { pendingAdd = it }) {
+    CompositionLocalProvider(LocalAddToPlaylist provides { songs -> pendingAddUris = songs.joinToString("\n") { it.uri } }) {
     Scaffold(
         containerColor = Color.Transparent, // the blurred cover (or the plain surface) shows through
         topBar = {
@@ -268,7 +262,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                 // Null, not empty: the glass bar draws a round button / capsule around whatever it is given.
                 navigationIcon = if (top == null) null else {
                     {
-                        IconButton(onClick = { stack.removeAt(stack.lastIndex) }) {
+                        IconButton(onClick = { pop() }) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                         }
                     }
@@ -287,36 +281,49 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         IconButton(onClick = { stack.add(Route.SettingsRoute) }) { Icon(Icons.Filled.Settings, "Settings") }
                     }
                 },
+                // Sideways phones are short on height: a slimmer bar.
+                expandedHeight = if (window.short) 56.dp else TopAppBarDefaults.TopAppBarExpandedHeight,
             )
         },
         bottomBar = {
-            // The glass tab bar keeps clear of the system navigation bar itself; alone, the mini player must.
-            Column(if (top != null) Modifier.navigationBarsPadding() else Modifier) {
-                if (player.hasMedia && top != Route.NowPlayingRoute) {
-                    MiniPlayer(player) { stack.add(Route.NowPlayingRoute) }
-                }
-                if (top == null) {
-                    NavigationBar {
-                        Tab.entries.forEach { t ->
-                            NavigationBarItem(
-                                selected = tab == t,
-                                onClick = { tab = t },
-                                icon = {
-                                    Icon(
-                                        when (t) {
-                                            Tab.Albums -> PlayerIcons.Album
-                                            Tab.Artists -> Icons.Filled.Person
-                                            Tab.Tracks -> Icons.AutoMirrored.Filled.List
-                                            Tab.Playlists -> PlayerIcons.Playlist
-                                            Tab.Folders -> PlayerIcons.Folder
-                                        },
-                                        t.label,
-                                    )
+            val showMini = player.hasMedia && top != Route.NowPlayingRoute
+            val showTabs = top == null
+            val tabItems: @Composable RowScope.() -> Unit = {
+                Tab.entries.forEach { t ->
+                    NavigationBarItem(
+                        selected = tab == t,
+                        onClick = { tab = t },
+                        icon = {
+                            Icon(
+                                when (t) {
+                                    Tab.Albums -> PlayerIcons.Album
+                                    Tab.Artists -> Icons.Filled.Person
+                                    Tab.Songs -> Icons.AutoMirrored.Filled.List
+                                    Tab.Playlists -> PlayerIcons.Playlist
+                                    Tab.Folders -> PlayerIcons.Folder
                                 },
-                                label = { Text(t.label) },
+                                t.label,
                             )
-                        }
-                    }
+                        },
+                        label = { Text(t.label) },
+                    )
+                }
+            }
+            if (showMini && showTabs && window.short && window.wide) {
+                // Phone turned sideways: mini player and tabs share one row, saving ~76 dp of height.
+                Row(Modifier.navigationBarsPadding().padding(start = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    MiniPlayer(player, Modifier.weight(1f)) { stack.add(Route.NowPlayingRoute) }
+                    NavigationBar(Modifier.weight(1f), windowInsets = WindowInsets(0), content = tabItems)
+                }
+            } else {
+                // The glass tab bar keeps clear of the system navigation bar itself; alone, the mini player must.
+                // On wide screens both stay a comfortable width, centred.
+                Column(
+                    if (showTabs) Modifier.fillMaxWidth() else Modifier.fillMaxWidth().navigationBarsPadding(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    if (showMini) MiniPlayer(player, Modifier.widthIn(max = MaxContentWidth)) { stack.add(Route.NowPlayingRoute) }
+                    if (showTabs) NavigationBar(Modifier.widthIn(max = 560.dp), content = tabItems)
                 }
             }
         },
@@ -333,78 +340,85 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
             }
             Box(Modifier.weight(1f)) {
                 val playing = player.currentUri
-                when (top) {
-                    is Route.AlbumRoute -> library.albums.firstOrNull { it.key == top.key }
-                        ?.let { AlbumDetail(it, playing, player) }
-                    is Route.ArtistRoute -> library.artists.firstOrNull { it.name == top.name }
-                        ?.let { a -> ArtistDetail(a, { stack.add(Route.AlbumRoute(it.key)) }, player) }
-                    is Route.FolderRoute -> FolderBrowser(library.folderTree, top.path, { stack.add(Route.FolderRoute(it)) }, playing, player)
-                    Route.QueueRoute -> QueueScreen(player) { name, uris ->
-                        app.playlists.create(name, uris)
-                        added(name, uris.size)
-                    }
-                    is Route.PlaylistRoute -> playlists.firstOrNull { it.id == top.id }?.let { p ->
-                        PlaylistDetail(
-                            playlist = p, byUri = byUri, playingUri = playing, player = player,
-                            onRemove = { app.playlists.removeAt(p.id, it) },
-                            onMove = { from, to -> app.playlists.move(p.id, from, to) },
-                            onRename = { app.playlists.rename(p.id, it) },
-                            onDelete = { app.playlists.delete(p.id); stack.removeAt(stack.lastIndex) },
+                // A restored screen can come back before the library has loaded, or point at
+                // something a rescan removed.
+                val missing: @Composable (String) -> Unit = { what ->
+                    if (!library.loaded) Loading() else EmptyState(PlayerIcons.Note, "This $what isn't in your library any more")
+                }
+                screenStates.SaveableStateProvider(screenKey(stack.size, top)) {
+                    when (top) {
+                        is Route.AlbumRoute -> library.albums.firstOrNull { it.key == top.key }
+                            ?.let { AlbumDetail(it, playing, player) } ?: missing("album")
+                        is Route.ArtistRoute -> library.artists.firstOrNull { it.name == top.name }
+                            ?.let { a -> ArtistDetail(a, { stack.add(Route.AlbumRoute(it.key)) }, player) } ?: missing("artist")
+                        is Route.FolderRoute -> FolderBrowser(library.folderTree, top.path, { stack.add(Route.FolderRoute(it)) }, playing, player)
+                        Route.QueueRoute -> QueueScreen(player) { name, uris ->
+                            app.playlists.create(name, uris)
+                            added(name, uris.size)
+                        }
+                        is Route.PlaylistRoute -> playlists.firstOrNull { it.id == top.id }?.let { p ->
+                            PlaylistDetail(
+                                playlist = p, byUri = byUri, playingUri = playing, player = player,
+                                onRemove = { app.playlists.removeAt(p.id, it) },
+                                onMove = { from, to -> app.playlists.move(p.id, from, to) },
+                                onRename = { app.playlists.rename(p.id, it) },
+                                onDelete = { app.playlists.delete(p.id); pop() },
+                            )
+                        } ?: missing("playlist")
+                        Route.SearchRoute -> SearchScreen(
+                            library = library,
+                            playingUri = playing,
+                            player = player,
+                            onOpenAlbum = { stack.add(Route.AlbumRoute(it.key)) },
+                            onOpenArtist = { stack.add(Route.ArtistRoute(it.name)) },
                         )
-                    }
-                    Route.SearchRoute -> SearchScreen(
-                        library = library,
-                        playingUri = playing,
-                        player = player,
-                        onOpenAlbum = { stack.add(Route.AlbumRoute(it.key)) },
-                        onOpenArtist = { stack.add(Route.ArtistRoute(it.name)) },
-                    )
-                    Route.NowPlayingRoute -> NowPlaying(player, sourceLabel, peak, driver, route, gainLabel, dspParams.processes, app.usbDriver::setVolumeStep)
-                    Route.DspRoute -> DspScreen(dspParams) { change ->
-                        DspSettings.update(app, change)
-                        dspParams = DspSettings.live
-                    }
-                    Route.SettingsRoute -> SettingsScreen(
-                        library = library,
-                        folderLabel = app.library::folderLabel,
-                        onAddFolder = { pickFolder.launch(null) },
-                        onRemoveFolder = app.library::removeFolder,
-                        onRescan = app.library::rescan,
-                        driver = driver,
-                        driverStatus = driverStatus,
-                        androidDac = androidDac,
-                        onDriver = ::setDriver,
-                        onDacVolume = app.usbDriver::setVolumeStep,
-                        onNativeDsd = { app.usbDriver.nativeDsdEnabled = it },
-                        onAutoForDsd = { app.usbDriver.autoEnableForDsd = it },
-                        replayGain = replayGainMode,
-                        onReplayGain = { replayGainMode = it; ReplayGain.setMode(app, it) },
-                        backdropStrength = backdropStrength,
-                        onBackdropStrength = { backdropStrength = it; BackdropSettings.setStrength(app, it) },
-                        dspOn = dspParams.processes,
-                        onOpenDsp = { stack.add(Route.DspRoute) },
-                        onProbe = { cb -> app.usbDriver.probe(cb) },
-                        onTone = { rate, bits -> player.pause(); app.usbDriver.startTone(rate, bits) {} },
-                        pluginName = app.levelMeter.name,
-                        pluginFormat = pluginFormat,
-                        decoderLabel = decoderLabel,
-                        peak = peak,
-                    )
-                    null -> if (library.tracks.isEmpty()) {
-                        EmptyLibrary(library.scanning || !library.loaded, library.progress) { pickFolder.launch(null) }
-                    } else {
-                        Column {
-                            if (library.scanning) {
-                                LinearProgressIndicator(Modifier.fillMaxWidth())
-                            }
-                            when (tab) {
-                                Tab.Albums -> AlbumsGrid(library.albums) { stack.add(Route.AlbumRoute(it.key)) }
-                                Tab.Artists -> ArtistsList(library.artists) { stack.add(Route.ArtistRoute(it.name)) }
-                                Tab.Tracks -> TracksList(library.tracks, playing, player)
-                                Tab.Playlists -> PlaylistsList(playlists, byUri, { stack.add(Route.PlaylistRoute(it.id)) }) { name ->
-                                    stack.add(Route.PlaylistRoute(app.playlists.create(name)))
+                        Route.NowPlayingRoute -> NowPlaying(player, sourceLabel, peak, driver, route, gainLabel, dspParams.processes, app.usbDriver::setVolumeStep)
+                        Route.DspRoute -> DspScreen(dspParams) { change ->
+                            DspSettings.update(app, change)
+                            dspParams = DspSettings.live
+                        }
+                        Route.SettingsRoute -> SettingsScreen(
+                            library = library,
+                            folderLabel = app.library::folderLabel,
+                            onAddFolder = { pickFolder.launch(null) },
+                            onRemoveFolder = app.library::removeFolder,
+                            onRescan = app.library::rescan,
+                            driver = driver,
+                            driverStatus = driverStatus,
+                            androidDac = androidDac,
+                            onDriver = ::setDriver,
+                            onDacVolume = app.usbDriver::setVolumeStep,
+                            onNativeDsd = { app.usbDriver.nativeDsdEnabled = it },
+                            onAutoForDsd = { app.usbDriver.autoEnableForDsd = it },
+                            replayGain = replayGainMode,
+                            onReplayGain = { replayGainMode = it; ReplayGain.setMode(app, it) },
+                            backdropStrength = backdropStrength,
+                            onBackdropStrength = { backdropStrength = it; BackdropSettings.setStrength(app, it) },
+                            dspOn = dspParams.processes,
+                            onOpenDsp = { stack.add(Route.DspRoute) },
+                            onProbe = { cb -> app.usbDriver.probe(cb) },
+                            onTone = { rate, bits -> player.pause(); app.usbDriver.startTone(rate, bits) {} },
+                            pluginName = app.levelMeter.name,
+                            pluginFormat = pluginFormat,
+                            decoderLabel = decoderLabel,
+                            peak = peak,
+                        )
+                        null -> if (library.tracks.isEmpty()) {
+                            EmptyLibrary(library.scanning || !library.loaded, library.progress) { pickFolder.launch(null) }
+                        } else {
+                            Column {
+                                if (library.scanning) {
+                                    LinearProgressIndicator(Modifier.fillMaxWidth())
                                 }
-                                Tab.Folders -> FolderBrowser(library.folderTree, null, { stack.add(Route.FolderRoute(it)) }, playing, player)
+                                when (tab) {
+                                    Tab.Albums -> AlbumsGrid(library.albums) { stack.add(Route.AlbumRoute(it.key)) }
+                                    Tab.Artists -> ArtistsList(library.artists) { stack.add(Route.ArtistRoute(it.name)) }
+                                    Tab.Songs -> TracksList(library.tracks, playing, player)
+                                    Tab.Playlists -> PlaylistsList(playlists, byUri, { stack.add(Route.PlaylistRoute(it.id)) }) { name ->
+                                        stack.add(Route.PlaylistRoute(app.playlists.create(name)))
+                                    }
+                                    Tab.Folders -> FolderBrowser(library.folderTree, null, { stack.add(Route.FolderRoute(it)) }, playing, player)
+                                }
                             }
                         }
                     }
@@ -417,9 +431,9 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
 }
 
 @Composable
-private fun MiniPlayer(player: PlayerUi, onOpen: () -> Unit) {
+private fun MiniPlayer(player: PlayerUi, modifier: Modifier = Modifier, onOpen: () -> Unit) {
     // A floating glass panel; tapping it opens Now playing.
-    GlassSurface(onClick = onOpen, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp), shape = RoundedCornerShape(22.dp)) {
+    GlassSurface(onClick = onOpen, modifier = modifier.padding(horizontal = 12.dp, vertical = 4.dp), shape = RoundedCornerShape(22.dp)) {
         Column {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),

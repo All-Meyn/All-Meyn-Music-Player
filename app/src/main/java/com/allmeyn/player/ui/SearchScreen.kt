@@ -73,10 +73,11 @@ fun SearchScreen(
             },
             singleLine = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp).focusRequester(focus),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp + sideInset(), vertical = 8.dp).focusRequester(focus),
         )
         if (query.isNotBlank() && results.isEmpty) {
-            Text("Nothing found", style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(16.dp))
+            EmptyState(Icons.Filled.Search, "Nothing found", "Every word must match a title, artist, album or year.")
+            return@Column
         }
         val tracks = results.tracks.take(MAX_TRACKS)
         LazyColumn(Modifier.fillMaxSize(), contentPadding = belowBars(bottom = 8.dp)) {
@@ -84,7 +85,7 @@ fun SearchScreen(
             items(results.artists, key = { "a:" + it.name.lowercase() }) { a ->
                 ResultRow(
                     art = a.albums.firstOrNull { it.art.isNotEmpty() }?.art.orEmpty(), round = true,
-                    title = a.name, subtitle = "${countOf(a.albums.size, "album")} · ${countOf(a.trackCount, "track")}",
+                    title = a.name, subtitle = "${countOf(a.albums.size, "album")} · ${countOf(a.trackCount, "song")}",
                 ) { keyboard?.hide(); onOpenArtist(a) }
             }
             if (results.albums.isNotEmpty()) item { Heading("Albums") }
@@ -125,7 +126,8 @@ private fun ResultRow(art: String, round: Boolean, title: String, subtitle: Stri
         Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Artwork(art, Modifier.size(44.dp), corner = if (round) 22.dp else 4.dp)
+        // The same sizes as the Artists and Playlists lists.
+        Artwork(art, Modifier.size(52.dp), corner = if (round) 26.dp else 6.dp)
         Column(Modifier.padding(start = 12.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
