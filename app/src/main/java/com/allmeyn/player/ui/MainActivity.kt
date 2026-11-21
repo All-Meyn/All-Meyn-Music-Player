@@ -102,11 +102,11 @@ class MainActivity : ComponentActivity() {
         // Launched by plugging in the DAC ("Always open All-Meyn"): permission is granted now.
         app.usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
         setContent {
-            AllMeynTheme {
-                ProvideWindowSize {
-                    AppRoot(controller, app)
-                    StartupOverlay() // the animated intro, once per launch, over the loading app
-                }
+            // The animated intro (once per launch) sits above the glass layer: glass elements are
+            // drawn over everything else inside LiquidGlassTheme, so inside it the glass buttons
+            // and bars showed through the intro.
+            AllMeynTheme(overlay = { StartupOverlay() }) {
+                ProvideWindowSize { AppRoot(controller, app) }
             }
         }
     }
@@ -136,15 +136,18 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AllMeynTheme(content: @Composable () -> Unit) {
+private fun AllMeynTheme(overlay: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
     // The brand's copper on cool, near-neutral greys (the logo's tile), in place of wallpaper colours.
     val scheme = if (dark) AllMeynDarkColors else AllMeynLightColors
     // Liquid Glass: records the screen once per frame; every glass element below refracts it. The
     // dialogs and menus draw in this window too, so it wraps everything, the playlist dialog included.
     MaterialTheme(colorScheme = scheme) {
-        LiquidGlassTheme(dark = dark, background = scheme.surface) {
-            Surface(Modifier.fillMaxSize()) { content() }
+        Box(Modifier.fillMaxSize()) {
+            LiquidGlassTheme(dark = dark, background = scheme.surface) {
+                Surface(Modifier.fillMaxSize()) { content() }
+            }
+            overlay() // drawn after (above) the glass layer
         }
     }
 }
