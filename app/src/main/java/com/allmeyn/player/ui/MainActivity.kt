@@ -203,6 +203,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     var driverStatus by remember { mutableStateOf("") }
     var gainLabel by remember { mutableStateOf<String?>(null) }
     var replayGainMode by remember { mutableStateOf(ReplayGain.mode(app)) }
+    var backdropStrength by remember { mutableStateOf(BackdropSettings.strength(app)) }
     var dspParams by remember { mutableStateOf(DspSettings.live) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -230,7 +231,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     val sourceLabel = decoderLabel ?: pluginFormat.takeIf { it != "—" }.orEmpty()
     val route = driverStatus.lineSequence().firstOrNull { it.startsWith("Player output:") }?.substringAfter(": ").orEmpty()
 
-    ArtBackdrop(player.artPath)
+    ArtBackdrop(player.artPath, backdropStrength)
 
     pendingAdd?.let { songs ->
         AddToPlaylistDialog(
@@ -378,6 +379,8 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         onAutoForDsd = { app.usbDriver.autoEnableForDsd = it },
                         replayGain = replayGainMode,
                         onReplayGain = { replayGainMode = it; ReplayGain.setMode(app, it) },
+                        backdropStrength = backdropStrength,
+                        onBackdropStrength = { backdropStrength = it; BackdropSettings.setStrength(app, it) },
                         dspOn = dspParams.processes,
                         onOpenDsp = { stack.add(Route.DspRoute) },
                         onProbe = { cb -> app.usbDriver.probe(cb) },
