@@ -69,6 +69,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
     implementation(libs.liquidglass)
+    compileOnly(libs.checker.qual) // annotations only (vendored Media3 FFmpeg decoder); not in the APK
     implementation(libs.liquidglass.material3)
 
     implementation(libs.media3.exoplayer)

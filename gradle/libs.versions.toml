@@ -10,6 +10,8 @@ composeBom = "2026.04.01"
 # 1.9.1 hardened session Bundles sent by other apps.
 media3 = "1.9.3"
 liquidglass = "1.0.0"
+# Compile-time nullness annotations the vendored Media3 FFmpeg decoder uses (Media3's own version).
+checkerQual = "3.13.0"
 junit = "4.13.2"
 androidxTestExtJunit = "1.2.1"
 androidxTestRunner = "1.6.2"
@@ -29,6 +31,8 @@ media3-session = { group = "androidx.media3", name = "media3-session", version.r
 # Liquid Glass look (Apache-2.0): the glass shader, and glass versions of the Material 3 components.
 liquidglass = { group = "dev.shayxo.liquidglass", name = "liquidglass", version.ref = "liquidglass" }
 liquidglass-material3 = { group = "dev.shayxo.liquidglass", name = "liquidglass-material3", version.ref = "liquidglass" }
+
+checker-qual = { group = "org.checkerframework", name = "checker-qual", version.ref = "checkerQual" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExtJunit" }
