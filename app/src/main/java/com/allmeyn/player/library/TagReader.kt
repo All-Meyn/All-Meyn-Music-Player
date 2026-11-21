@@ -36,6 +36,26 @@ object TagReader {
         var sampleRate = 0
         var bits = 0
         var cover: ByteArray? = null
+        /** Other text tags by lower-case name (ID3 TXXX descriptions, APEv2 keys), e.g. ReplayGain. */
+        val extra = HashMap<String, String>()
+    }
+
+    /**
+     * Free-form text tags (ReplayGain etc.) of the formats Media3 can't read tags from during
+     * playback (DSF, DFF, APE, WavPack); empty for anything else.
+     */
+    fun extraTags(pfd: ParcelFileDescriptor, extension: String): Map<String, String> {
+        val t = Tags()
+        try {
+            when (extension) {
+                "dsf" -> dsfId3(pfd, t)
+                "dff" -> dffId3(pfd, t)
+                "ape", "wv" -> apeTags(pfd, t)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "extra tags: ${e.message}")
+        }
+        return t.extra
     }
 
     private const val TAG = "TagReader"
@@ -147,6 +167,7 @@ object TagReader {
                         "TRCK", "TRK" -> t.trackNo = LibraryIndex.parseNumber(v)
                         "TPOS", "TPA" -> t.discNo = LibraryIndex.parseNumber(v)
                         "TDRC", "TYER", "TYE", "TDRL" -> if (t.year == 0) t.year = LibraryIndex.parseYear(v)
+                        "TXXX" -> e.description?.let { d -> t.extra[d.lowercase()] = v }
                     }
                 }
                 is ApicFrame -> if (t.cover == null || e.pictureType == 3) t.cover = e.pictureData
@@ -163,6 +184,7 @@ object TagReader {
         if (tagSize > MAX_TAG_BYTES) return
         val block = readAt(pfd, size - afterFooter - tagSize, tagSize)
         val r = ApeTag.parse(block)
+        t.extra.putAll(r.text)
         r.text["title"]?.let { t.title = it }
         r.text["artist"]?.let { t.artist = it }
         r.text["album"]?.let { t.album = it }

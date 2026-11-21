@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -40,6 +41,7 @@ import androidx.media3.common.util.UnstableApi
 import com.allmeyn.player.BuildConfig
 import com.allmeyn.player.library.MusicLibrary
 import com.allmeyn.player.usb.DacStatus
+import com.allmeyn.player.playback.ReplayGain
 import com.allmeyn.player.usb.UsbAudioDriver
 import kotlin.math.roundToInt
 
@@ -59,6 +61,8 @@ fun SettingsScreen(
     onDacVolume: (Int) -> Unit,
     onNativeDsd: (Boolean) -> Unit,
     onAutoForDsd: (Boolean) -> Unit,
+    replayGain: ReplayGain.Mode,
+    onReplayGain: (ReplayGain.Mode) -> Unit,
     onProbe: ((String) -> Unit) -> Unit,
     onTone: (Int, Int) -> Unit,
     pluginName: String,
@@ -90,6 +94,23 @@ fun SettingsScreen(
         }
 
         // ---- Output
+        Section("Playback") {
+            Text("ReplayGain", fontWeight = FontWeight.Medium)
+            Text(
+                "Evens out loudness between songs using their ReplayGain tags (only turns down). " +
+                    "Applies to Android output only: the bit-perfect USB driver never changes the audio.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                ReplayGain.Mode.entries.forEach { m ->
+                    FilterChip(
+                        selected = replayGain == m,
+                        onClick = { onReplayGain(m) },
+                        label = { Text(m.name.lowercase().replaceFirstChar { it.uppercase() }) },
+                    )
+                }
+            }
+        }
         Section("Output") {
             if (driver.active) {
                 Text("${driver.deviceName ?: "USB DAC"} · All-Meyn USB driver", fontWeight = FontWeight.Medium)
