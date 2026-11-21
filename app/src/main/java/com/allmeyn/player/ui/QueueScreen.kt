@@ -2,7 +2,6 @@ package com.allmeyn.player.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -24,18 +23,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,51 +44,12 @@ fun QueueScreen(player: PlayerUi, onSaveAsPlaylist: (name: String, uris: List<St
     val current = remember(player.queueVersion) { player.currentIndex }
     val currentPos = entries.indexOfFirst { it.index == current }
     val listState = rememberLazyListState()
-    val density = LocalDensity.current.density
     LaunchedEffect(Unit) { if (currentPos > 0) listState.scrollToItem(currentPos) }
 
-    // Drag state: the rows in their on-screen order while dragging, the dragged row's key, and
-    // how far it is from where the list has laid it out.
-    val rows = remember(entries) { entries.toMutableStateList() }
-    var dragKey by remember { mutableStateOf<String?>(null) }
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    fun keyOf(e: PlayerUi.QueueEntry) = e.index.toString() + e.uri
-
-    fun onDrag(dy: Float) {
-        val key = dragKey ?: return
-        dragOffset += dy
-        val info = listState.layoutInfo
-        val cur = info.visibleItemsInfo.firstOrNull { it.key == key } ?: return
-        // Swap with the row under the dragged row's centre.
-        val centre = cur.offset + dragOffset + cur.size / 2f
-        val target = info.visibleItemsInfo.firstOrNull {
-            it.key != key && centre >= it.offset && centre < it.offset + it.size
-        }
-        if (target != null) {
-            rows.add(target.index, rows.removeAt(cur.index))
-            dragOffset += cur.offset - target.offset
-        }
-        // Near an edge: scroll, and keep the row under the finger.
-        val edge = 48f * density
-        val top = cur.offset + dragOffset
-        val bottom = top + cur.size
-        val scroll = when {
-            bottom > info.viewportEndOffset - edge -> 12f * density
-            top < info.viewportStartOffset + edge -> -12f * density
-            else -> 0f
-        }
-        if (scroll != 0f) dragOffset += listState.dispatchRawDelta(scroll)
-    }
-
-    fun onDragEnd() {
-        val key = dragKey ?: return
-        val from = entries.indexOfFirst { keyOf(it) == key }
-        val to = rows.indexOfFirst { keyOf(it) == key }
-        dragKey = null
-        dragOffset = 0f
-        // Shuffle off: play order is list order, so positions are list indices.
-        if (from >= 0 && to >= 0 && from != to) player.move(entries[from].index, to)
-    }
+    fun keyOf(e: PlayerUi.QueueEntry): Any = e.index.toString() + e.uri
+    val reorder = rememberReorderState(entries, listState, ::keyOf)
+    // Shuffle off: play order is list order, so positions are list indices.
+    val onMove: (Int, Int) -> Unit = { from, to -> player.move(entries[from].index, to) }
 
     if (entries.isEmpty()) {
         Column(Modifier.fillMaxSize().padding(32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -123,8 +77,8 @@ fun QueueScreen(player: PlayerUi, onSaveAsPlaylist: (name: String, uris: List<St
             }
         }
         LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 8.dp)) {
-            itemsIndexed(rows, key = { _, e -> keyOf(e) }) { pos, e ->
-                val dragging = dragKey == keyOf(e)
+            itemsIndexed(reorder.rows, key = { _, e -> keyOf(e) }) { pos, e ->
+                val dragging = reorder.isDragging(e)
                 val isCurrent = e.index == current
                 val played = currentPos >= 0 && pos < currentPos
                 val color = when {
@@ -134,7 +88,7 @@ fun QueueScreen(player: PlayerUi, onSaveAsPlaylist: (name: String, uris: List<St
                 }
                 Row(
                     Modifier
-                        .then(if (dragging) Modifier.zIndex(1f).graphicsLayer { translationY = dragOffset } else Modifier.animateItem())
+                        .then(reorderRow(reorder, e))
                         .fillMaxWidth()
                         .background(if (dragging) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent)
                         .clickable { player.jumpTo(e.index) }
@@ -153,23 +107,7 @@ fun QueueScreen(player: PlayerUi, onSaveAsPlaylist: (name: String, uris: List<St
                             style = MaterialTheme.typography.bodySmall, color = color, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    if (!player.shuffle && entries.size > 1) {
-                        Icon(
-                            PlayerIcons.DragHandle, "Drag to move",
-                            Modifier
-                                .size(48.dp)
-                                .padding(12.dp)
-                                .pointerInput(keyOf(e), rows) {
-                                    detectDragGestures(
-                                        onDragStart = { dragKey = keyOf(e); dragOffset = 0f },
-                                        onDrag = { change, amount -> change.consume(); onDrag(amount.y) },
-                                        onDragEnd = { onDragEnd() },
-                                        onDragCancel = { onDragEnd() },
-                                    )
-                                },
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    if (!player.shuffle && entries.size > 1) DragHandle(reorder, e, onMove)
                     if (!isCurrent) {
                         IconButton(onClick = { player.removeAt(e.index) }) { Icon(Icons.Filled.Close, "Remove") }
                     } else {

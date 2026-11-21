@@ -305,6 +305,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         PlaylistDetail(
                             playlist = p, byUri = byUri, playingUri = playing, player = player,
                             onRemove = { app.playlists.removeAt(p.id, it) },
+                            onMove = { from, to -> app.playlists.move(p.id, from, to) },
                             onRename = { app.playlists.rename(p.id, it) },
                             onDelete = { app.playlists.delete(p.id); stack.removeAt(stack.lastIndex) },
                         )

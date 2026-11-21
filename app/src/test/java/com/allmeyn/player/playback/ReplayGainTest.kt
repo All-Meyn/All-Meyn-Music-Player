@@ -1,5 +1,6 @@
 package com.allmeyn.player.playback
 
+import androidx.media3.common.C
 import androidx.media3.common.Metadata
 import androidx.media3.extractor.metadata.id3.InternalFrame
 import androidx.media3.extractor.metadata.id3.TextInformationFrame
@@ -9,6 +10,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class ReplayGainTest {
     @Test fun parsesDb() {
@@ -52,5 +55,39 @@ class ReplayGainTest {
         val m4a = Metadata(InternalFrame("com.apple.iTunes", "replaygain_track_gain", "-2.5 dB"))
         assertEquals(-2.5f, ReplayGain.fromMetadata(m4a).trackDb!!, 1e-4f)
         assertTrue(ReplayGain.fromMetadata(null).isEmpty)
+    }
+
+    private fun le(vararg shorts: Int) = ByteBuffer.allocate(shorts.size * 2).order(ByteOrder.LITTLE_ENDIAN)
+        .apply { shorts.forEach { putShort(it.toShort()) }; flip() }
+
+    @Test fun scalesEachFormat() {
+        val s16 = le(10000, -10000, 32767, -32768)
+        ReplayGain.scale(s16, C.ENCODING_PCM_16BIT, 0.5f)
+        assertEquals(listOf(5000, -5000, 16384, -16384), (0 until 4).map { s16.getShort(it * 2).toInt() })
+        assertEquals(0, s16.position()) // position/limit untouched
+
+        val s24 = ByteBuffer.wrap(byteArrayOf(0x00, 0x00, 0x40, 0x00, 0x00, 0xC0.toByte())) // +0x400000, -0x400000
+        ReplayGain.scale(s24, C.ENCODING_PCM_24BIT, 0.5f)
+        assertEquals(listOf(0x00, 0x00, 0x20, 0x00, 0x00, 0xE0), s24.array().map { it.toInt() and 0xFF })
+
+        val s32 = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putInt(1_000_000_000).putInt(-2_000_000_000).flip() as ByteBuffer
+        ReplayGain.scale(s32, C.ENCODING_PCM_32BIT, 0.25f)
+        assertEquals(250_000_000, s32.getInt(0)); assertEquals(-500_000_000, s32.getInt(4))
+
+        val f = ByteBuffer.allocate(8).order(ByteOrder.LITTLE_ENDIAN).putFloat(0.8f).putFloat(-1f).flip() as ByteBuffer
+        ReplayGain.scale(f, C.ENCODING_PCM_FLOAT, 0.5f)
+        assertEquals(0.4f, f.getFloat(0), 1e-7f); assertEquals(-0.5f, f.getFloat(4), 1e-7f)
+    }
+
+    @Test fun scaleOnlyTouchesPositionToLimitAndNeverBoosts() {
+        val b = le(1000, 1000, 1000)
+        b.position(2); b.limit(4)
+        ReplayGain.scale(b, C.ENCODING_PCM_16BIT, 0.5f)
+        assertEquals(2, b.position()); assertEquals(4, b.limit())
+        b.clear() // read all three samples back
+        assertEquals(listOf(1000, 500, 1000), (0 until 3).map { b.getShort(it * 2).toInt() })
+        val c = le(1000)
+        ReplayGain.scale(c, C.ENCODING_PCM_16BIT, 1f)
+        assertEquals(1000, c.getShort(0).toInt())
     }
 }

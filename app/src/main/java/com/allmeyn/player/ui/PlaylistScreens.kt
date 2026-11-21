@@ -1,6 +1,10 @@
 package com.allmeyn.player.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -91,6 +95,7 @@ fun PlaylistDetail(
     playingUri: String,
     player: PlayerUi,
     onRemove: (index: Int) -> Unit,
+    onMove: (from: Int, to: Int) -> Unit,
     onRename: (String) -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -101,7 +106,11 @@ fun PlaylistDetail(
     var menu by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 8.dp)) {
+    val listState = rememberLazyListState()
+    // Drag a song by its handle: positions map back to indices in the playlist.
+    val reorder = rememberReorderState(rows, listState) { r -> "${r.first}:${r.second.uri}" }
+    val moveInPlaylist: (Int, Int) -> Unit = { from, to -> onMove(rows[from].first, rows[to].first) }
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = PaddingValues(bottom = 8.dp)) {
         item {
             Row(Modifier.padding(start = 16.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -133,14 +142,24 @@ fun PlaylistDetail(
                 Text("Empty. Long-press any song and pick \"Add to playlist\".", style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(16.dp))
             }
         }
-        itemsIndexed(rows, key = { _, r -> "${r.first}:${r.second.uri}" }) { pos, (index, t) ->
-            TrackRow(
-                t, playing = t.uri == playingUri,
-                leading = { Artwork(t.art, Modifier.size(44.dp), corner = 4.dp) },
-                subtitle = listOf(t.artist, t.album).filter { it.isNotBlank() }.joinToString(" · "),
-                player = player,
-                trailing = { IconButton(onClick = { onRemove(index) }) { Icon(Icons.Filled.Close, "Remove from playlist") } },
-            ) { player.playTracks(tracks, pos) }
+        itemsIndexed(reorder.rows, key = { _, r -> "${r.first}:${r.second.uri}" }) { pos, row ->
+            val (index, t) = row
+            Box(
+                reorderRow(reorder, row).background(
+                    if (reorder.isDragging(row)) MaterialTheme.colorScheme.surfaceContainerHigh else Color.Transparent,
+                ),
+            ) {
+                TrackRow(
+                    t, playing = t.uri == playingUri,
+                    leading = { Artwork(t.art, Modifier.size(44.dp), corner = 4.dp) },
+                    subtitle = listOf(t.artist, t.album).filter { it.isNotBlank() }.joinToString(" · "),
+                    player = player,
+                    trailing = {
+                        if (rows.size > 1) DragHandle(reorder, row, moveInPlaylist)
+                        IconButton(onClick = { onRemove(index) }) { Icon(Icons.Filled.Close, "Remove from playlist") }
+                    },
+                ) { player.playTracks(tracks, pos) }
+            }
         }
     }
     if (renaming) NameDialog("Rename playlist", playlist.name, onDismiss = { renaming = false }) { renaming = false; onRename(it) }

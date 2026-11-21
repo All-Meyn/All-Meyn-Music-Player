@@ -9,7 +9,10 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
+import com.allmeyn.player.library.TagReader
+import com.allmeyn.player.playback.ReplayGain
 import java.io.IOException
+import java.nio.ByteBuffer
 import kotlin.math.min
 
 /**
@@ -48,6 +51,8 @@ class DecodingDataSource(
     private var scratchLen = 0
     private var scratchPos = 0
     private var skipInFrame = 0
+    private var gain = 1f
+    private var gainEncoding = C.ENCODING_INVALID
 
     override fun addTransferListener(transferListener: TransferListener) =
         upstream.addTransferListener(transferListener)
@@ -83,6 +88,8 @@ class DecodingDataSource(
             nativeFrameRate = rate, output = output, description = NativeDecoder.describe(h), fromStart = fromStart,
         )
 
+        setUpReplayGain(dataSpec.uri, output.replayGain, isDopOrNative = info[5] != 0L || info[6] != 0L, format)
+
         header = Rf64.header(rate, channels, format, frames)
         val frameBytes = channels * DecodedFormat.sampleBytes(format)
         val total = header.size + frames * frameBytes
@@ -99,6 +106,31 @@ class DecodingDataSource(
         bytesRemaining = total - pos
         if (dataSpec.length != C.LENGTH_UNSET.toLong()) bytesRemaining = min(bytesRemaining, dataSpec.length)
         return bytesRemaining
+    }
+
+    /**
+     * ReplayGain for our decoded formats (Media3 never sees their tags): read the file's tags and
+     * scale the decoded PCM. Only when [mode] is on, which the service only allows for Android
+     * output; never for DoP / native DSD.
+     */
+    private fun setUpReplayGain(uri: Uri, mode: ReplayGain.Mode, isDopOrNative: Boolean, format: Int) {
+        gain = 1f
+        if (mode == ReplayGain.Mode.OFF || isDopOrNative) return
+        val ext = uri.toString().substringAfterLast('.', "").lowercase()
+        val tags = try {
+            context.contentResolver.openFileDescriptor(uri, "r")?.use { TagReader.extraTags(it, ext) }.orEmpty()
+        } catch (e: Exception) {
+            emptyMap()
+        }
+        val gains = ReplayGain.fromTags(tags)
+        ReplayGain.decodedGains[uri.toString()] = gains
+        gain = ReplayGain.volumeFor(ReplayGain.pick(gains, mode))
+        gainEncoding = when (format) {
+            DecodedFormat.S16 -> C.ENCODING_PCM_16BIT
+            DecodedFormat.S24 -> C.ENCODING_PCM_24BIT
+            DecodedFormat.S32 -> C.ENCODING_PCM_32BIT
+            else -> C.ENCODING_PCM_FLOAT
+        }
     }
 
     /** [NativeDecoder.NOT_OURS], [NativeDecoder.OPEN_ERROR], or a handle (any other value, may be negative). Local files only. */
@@ -132,6 +164,7 @@ class DecodingDataSource(
                 throw IOException("Decode error in ${uri?.lastPathSegment}")
             }
             if (n == 0) return C.RESULT_END_OF_INPUT // decoder ended a little early: fine
+            if (gain < 1f) ReplayGain.scale(ByteBuffer.wrap(scratch, 0, n), gainEncoding, gain)
             scratchLen = n
             scratchPos = min(skipInFrame, n)
             skipInFrame = 0
@@ -166,5 +199,6 @@ class DecodingDataSource(
         scratchPos = 0
         skipInFrame = 0
         bytesRemaining = 0
+        gain = 1f
     }
 }
