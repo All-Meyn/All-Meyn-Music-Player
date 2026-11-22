@@ -5,6 +5,8 @@ on:
     paths:
       - "desktop/**"
       - "app/src/main/cpp/**"
+      - "app/src/main/java/com/allmeyn/player/library/Models.kt"   # compiled into the desktop app
+      - "app/src/main/java/com/allmeyn/player/dsp/DspParams.kt"
       - "app/src/main/res/drawable/ic_brand_mark.xml"
       - "branding/**"
       - "scripts/build-ffmpeg-desktop.sh"
@@ -15,6 +17,8 @@ on:
     paths:
       - "desktop/**"
       - "app/src/main/cpp/**"
+      - "app/src/main/java/com/allmeyn/player/library/Models.kt"   # compiled into the desktop app
+      - "app/src/main/java/com/allmeyn/player/dsp/DspParams.kt"
       - "app/src/main/res/drawable/ic_brand_mark.xml"
       - "branding/**"
       - "scripts/build-ffmpeg-desktop.sh"
