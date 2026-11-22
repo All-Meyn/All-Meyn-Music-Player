@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
@@ -35,15 +36,21 @@ private object ArtMemory {
     }
 }
 
-/** Album cover from the library's art cache, with a placeholder while loading or when missing. */
+/**
+ * Album cover from the library's art cache, with a placeholder while loading or when missing.
+ * [size] is how big it is shown: the cover is decoded at about that size (a 44 dp row needs a
+ * quarter of the 600 px cache image), so scrolling lists decode, keep and upload far less.
+ */
 @Composable
-fun Artwork(path: String, modifier: Modifier = Modifier, corner: Dp = 8.dp) {
-    fun cached(p: String): Bitmap? = p.takeIf { it.isNotEmpty() }?.let { ArtMemory.cache.get(it) }
-    val bitmap by produceState(initialValue = cached(path), path) {
-        value = cached(path) // reset when the path changes
+fun Artwork(path: String, modifier: Modifier = Modifier, corner: Dp = 8.dp, size: Dp = 600.dp) {
+    val targetPx = with(LocalDensity.current) { size.roundToPx() }
+    val key = "$path#$targetPx"
+    fun cached(): Bitmap? = if (path.isEmpty()) null else ArtMemory.cache.get(key)
+    val bitmap by produceState(initialValue = cached(), key) {
+        value = cached() // reset when the cover or size changes
         if (path.isEmpty() || value != null) return@produceState
         value = withContext(Dispatchers.IO) {
-            BitmapFactory.decodeFile(path)?.also { ArtMemory.cache.put(path, it) }
+            decodeAtLeast(path, targetPx)?.also { ArtMemory.cache.put(key, it) }
         }
     }
     val shape = RoundedCornerShape(corner)
@@ -59,6 +66,16 @@ fun Artwork(path: String, modifier: Modifier = Modifier, corner: Dp = 8.dp) {
             )
         }
     }
+}
+
+/** Decodes [path] with the largest power-of-two subsampling that keeps it at least [px] wide and tall. */
+private fun decodeAtLeast(path: String, px: Int): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeFile(path, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= px && bounds.outHeight / (sample * 2) >= px) sample *= 2
+    return BitmapFactory.decodeFile(path, BitmapFactory.Options().apply { inSampleSize = sample })
 }
 
 /**

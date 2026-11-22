@@ -97,7 +97,7 @@ fun QueueScreen(player: PlayerUi, onSaveAsPlaylist: (name: String, uris: List<St
                         .padding(start = 16.dp, top = 4.dp, bottom = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Artwork(e.artPath, Modifier.size(44.dp), corner = 4.dp)
+                    Artwork(e.artPath, Modifier.size(44.dp), corner = 4.dp, size = 44.dp)
                     Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                         Text(
                             e.title.ifBlank { e.uri.substringAfterLast("%2F").substringAfterLast('/') }, color = color,
