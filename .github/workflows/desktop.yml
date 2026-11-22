@@ -98,6 +98,13 @@ jobs:
       - name: Unit tests (incl. loading the real engine DLL) and the installer
         run: ./gradlew --no-daemon -p desktop test packageMsi
 
+      - name: Check the engine DLL tests ran (not skipped)
+        run: |
+          xml=desktop/build/test-results/test/TEST-com.allmeyn.desktop.engine.NativeEngineTest.xml
+          grep -o '<testsuite[^>]*>' "$xml"
+          grep -q 'skipped="0"' "$xml" || { echo "NativeEngineTest was skipped: the DLL wasn't loaded"; exit 1; }
+          grep -o 'Outputs:[^<]*' "$xml" || true
+
       - uses: actions/upload-artifact@v6
         if: always()
         with:
