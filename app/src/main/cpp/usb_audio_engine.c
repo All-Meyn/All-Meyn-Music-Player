@@ -72,7 +72,6 @@ struct Engine {
     Ring ring;
     int in_format, in_channels;  // producer side only
     atomic_int idle_byte;        // fill for pauses/underruns: 0 for PCM, DSD_IDLE_BYTE for native DSD
-    atomic_uint settle_frames;   // native DSD: DSD silence still to send after a flush (DSD_SETTLE_MS)
     atomic_int source;
     atomic_int playing;
     atomic_uint gen;
@@ -117,8 +116,6 @@ static int fill_packet(Engine *e, uint8_t *buf, uint32_t *ring_frames_out) {
                 }
             }
             got = frames;
-        } else if (settle_take(&e->settle_frames, (uint32_t) frames) > 0) {
-            got = 0;  // native DSD settling after a flush: the whole packet is DSD silence
         } else {
             got = (int) ring_read(&e->ring, buf, (uint32_t) frames);
             *ring_frames_out += (uint32_t) got;
@@ -302,8 +299,6 @@ static void reset_position(Engine *e) {
     atomic_store(&e->playing, 0);
     underrun_restart(&e->ur);
     ring_flush(&e->ring);
-    atomic_store(&e->settle_frames,
-                 e->in_format == IN_DSD_NATIVE ? (unsigned) ((int64_t) e->rate * DSD_SETTLE_MS / 1000) : 0u);
     atomic_fetch_add(&e->gen, 1);
     atomic_store(&e->played_frames, 0);
 }

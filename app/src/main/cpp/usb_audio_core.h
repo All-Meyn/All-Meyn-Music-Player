@@ -40,17 +40,6 @@ void underrun_end_of_stream(UnderrunState *s);
 /** DSD idle pattern: what a DAC in native DSD mode gets when there is nothing to play. */
 #define DSD_IDLE_BYTE 0x69
 
-/*
- * Native DSD settle: after a flush (seek, skip) the DAC gets this much DSD silence before the new
- * audio. DSD DACs mute softly after a moment of DSD silence; a seek leaves only milliseconds between
- * the old audio and the new, so without this the splice of two points in a 1-bit stream is heard as
- * a burst of noise. A pause already gives that silence, which is why pause/resume was clean.
- */
-#define DSD_SETTLE_MS 150
-
-/** Takes up to [frames] from the settle budget [hold]; returns how many it took (0 = none left). */
-uint32_t settle_take(atomic_uint *hold, uint32_t frames);
-
 /**
  * Single-producer (playback thread) / single-consumer (USB event thread) ring of frames already
  * converted to the DAC's format. Positions are monotonically increasing frame counters.

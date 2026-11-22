@@ -73,13 +73,6 @@ int main(void) {
     underrun_restart(&u);                          // next playback
     assert(underrun_note(&u, 1) == 0);
     assert(underrun_note(&u, 0) == 1);
-    // 8. native DSD settle budget: packets of silence until it's spent, then nothing more
-    atomic_uint hold = 88200 * DSD_SETTLE_MS / 1000;   // DSD64 frame rate, 150 ms = 13230 frames
-    unsigned silent = 0, packets = 0;
-    while (settle_take(&hold, 11) > 0) { silent += 11; packets++; }   // ~11 frames per 125 us packet
-    assert(packets == (13230 + 10) / 11);                // whole budget, in packets
-    assert(atomic_load(&hold) == 0 && settle_take(&hold, 11) == 0);
-    assert(silent >= 13230 && silent < 13230 + 11);       // at most one packet over
     puts("core tests passed");
     return 0;
 }
