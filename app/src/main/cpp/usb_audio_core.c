@@ -41,6 +41,15 @@ uint32_t ring_space(Ring *r) {
     return r->capacity_frames - ring_available(r);
 }
 
+uint32_t settle_take(atomic_uint *hold, uint32_t frames) {
+    unsigned cur = atomic_load(hold);
+    while (cur > 0) {
+        unsigned take = cur < frames ? cur : frames;
+        if (atomic_compare_exchange_weak(hold, &cur, cur - take)) return take;
+    }
+    return 0;
+}
+
 void ring_flush(Ring *r) {
     atomic_store(&r->read_pos, atomic_load(&r->write_pos));
 }
