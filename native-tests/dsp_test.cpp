@@ -73,8 +73,9 @@ int main() {
 
     // 2. Neutral settings with every processor on: bands sum back flat (allpass only).
     {
-        Params p; p.companderOn = p.bassOn = p.impactOn = true;
+        Params p; p.companderOn = p.bassOn = p.impactOn = p.vocalOn = true;
         p.expansionPercent = 0; p.bassPercent = 0; p.impactPercent = 0;
+        p.presencePercent = p.detailPercent = p.airPercent = 0;
         double worst = 0;
         for (double hz : {40.0, 150.0, 400.0, 1000.0, 3000.0, 6000.0, 15000.0}) worst = std::fmax(worst, std::fabs(gainDb(p, hz, -20)));
         check(worst < 0.05, "neutral chain is flat 40 Hz - 15 kHz (max |dB|)", worst);
@@ -178,12 +179,12 @@ int main() {
         Params a; a.companderOn = a.impactOn = true; a.expansionPercent = 50; a.impactPercent = 100;
         auto burst = sine(200, -15, 1.0);
         for (int i = 0; i < (int) (0.5 * SR); i++) burst[2 * i] = burst[2 * i + 1] = 0;
-        Params b = a; b.order[0] = kImpact; b.order[1] = kBass; b.order[2] = kCompander;
+        Params b = a; b.order[0] = kImpact; b.order[1] = kBass; b.order[2] = kCompander; b.order[3] = kVocal;
         auto x = run(a, burst), y = run(b, burst);
         double diff = 0;
         for (size_t i = 0; i < x.size(); i++) diff = std::fmax(diff, std::fabs(x[i] - y[i]));
         check(diff > 1e-4, "changing the processor order changes the result", diff);
-        Params bad = a; bad.order[0] = kBass; bad.order[1] = kBass; bad.order[2] = kBass;
+        Params bad = a; bad.order[0] = kBass; bad.order[1] = kBass; bad.order[2] = kBass; bad.order[3] = kBass;
         auto z = run(bad, burst);
         double same = 0;
         for (size_t i = 0; i < x.size(); i++) same = std::fmax(same, std::fabs(x[i] - z[i]));
@@ -216,8 +217,9 @@ int main() {
 
     // 13. High sample rate (DSD -> PCM 176.4 kHz, 768 kHz PCM): stable and flat.
     for (double rate : {176400.0, 768000.0}) {
-        Params p; p.companderOn = p.bassOn = p.impactOn = true;
+        Params p; p.companderOn = p.bassOn = p.impactOn = p.vocalOn = true;
         p.expansionPercent = 0; p.bassPercent = 0; p.impactPercent = 0;
+        p.presencePercent = p.detailPercent = p.airPercent = 0;
         Chain c(rate, 2); c.setParams(p);
         const int n = (int) rate;
         std::vector<float> v(2 * n);
@@ -229,6 +231,109 @@ int main() {
         char label[80];
         std::snprintf(label, sizeof label, "neutral chain flat at %.1f kHz (dB)", rate / 1000);
         check(std::fabs(db) < 0.05, label, db);
+    }
+
+    // 14. Vocal & Detail Restoration.
+    {
+        // Neutral (all 0 %) is flat and effectively untouched.
+        Params n; n.vocalOn = true; n.presencePercent = n.detailPercent = n.airPercent = 0;
+        double worst = 0;
+        for (double f : {100.0, 1000.0, 3000.0, 12000.0}) worst = std::fmax(worst, std::fabs(gainDb(n, f, -20)));
+        check(worst < 0.001, "vocal: all 0 % is flat (max |dB|)", worst);
+        auto in = sine(1000, -12, 0.5);
+        auto out = run(n, in);
+        double maxDiff = 0;
+        for (size_t i = 0; i < in.size(); i++) maxDiff = std::fmax(maxDiff, std::fabs(out[i] - in[i]));
+        check(maxDiff < 1e-6, "vocal: all 0 % output equals input (max diff)", maxDiff);
+    }
+    {
+        // Side-only content (L = -R) is never touched: the processor works on the mid signal.
+        Params p; p.vocalOn = true; p.presencePercent = p.detailPercent = p.airPercent = 100;
+        auto in = sine(2000, -20, 0.5);
+        for (size_t i = 0; i < in.size(); i += 2) in[i + 1] = -in[i];
+        auto out = run(p, in);
+        double maxDiff = 0;
+        for (size_t i = 0; i < in.size(); i++) maxDiff = std::fmax(maxDiff, std::fabs(out[i] - in[i]));
+        check(maxDiff < 1e-6, "vocal: side-only signal untouched at 100 % (max diff)", maxDiff);
+    }
+    {
+        // Detail lifts a quiet vocal-band tone, leaves a loud one alone, and ignores bass.
+        Params p; p.vocalOn = true; p.presencePercent = 0; p.detailPercent = 100; p.airPercent = 0;
+        const double quiet = gainDb(p, 1000, -40), loud = gainDb(p, 1000, -6), bass = gainDb(p, 60, -40);
+        check(quiet > 1.0 && quiet < 3.3, "vocal detail 100 %: quiet 1 kHz lifted (dB)", quiet);
+        check(std::fabs(loud) < 0.05, "vocal detail 100 %: loud 1 kHz unchanged (dB)", loud);
+        check(bass < quiet - 0.5, "vocal detail 100 %: 60 Hz lifted less than 1 kHz (dB)", bass);
+    }
+    {
+        // Presence lifts a burst's attack more than its steady part.
+        Params p; p.vocalOn = true; p.presencePercent = 100; p.detailPercent = 0; p.airPercent = 0;
+        auto in = sine(1500, -20, 1.0);
+        for (int i = 0; i < (int) (0.5 * SR); i++) in[2 * i] = in[2 * i + 1] = 0;
+        auto out = run(p, in);
+        const double onset = rmsDb(out, 0.502, 0.512) - rmsDb(in, 0.502, 0.512);
+        const double steady = rmsDb(out, 0.9, 1.0) - rmsDb(in, 0.9, 1.0);
+        check(onset > steady + 0.5, "vocal presence 100 %: attack lifted more than steady tone (dB)", onset - steady);
+    }
+    {
+        // Air lifts 12 kHz and leaves 200 Hz (nearly) alone.
+        Params p; p.vocalOn = true; p.presencePercent = 0; p.detailPercent = 0; p.airPercent = 100;
+        const double hi = gainDb(p, 12000, -20), lo = gainDb(p, 200, -20);
+        check(hi > 2.0, "vocal air 100 %: 12 kHz lifted (dB)", hi);
+        check(std::fabs(lo) < 0.3, "vocal air 100 %: 200 Hz nearly unchanged (dB)", lo);
+    }
+    {
+        // Air at 44.1 kHz: a loud 15 kHz tone's 3rd harmonic (45 kHz) would fold to 900 Hz without
+        // oversampling. Measure what lands at 900 Hz relative to the tone.
+        const double sr = 44100.0;
+        Params p; p.vocalOn = true; p.presencePercent = 0; p.detailPercent = 0; p.airPercent = 100;
+        Chain c(sr, 2); c.setParams(p);
+        const int n = (int) sr;
+        std::vector<float> v(2 * n);
+        for (int i = 0; i < n; i++) v[2 * i] = v[2 * i + 1] = (float) (0.5 * std::sin(2 * PI * 15000 * i / sr));
+        c.process(v.data(), n);
+        auto goertzel = [&](double f) {
+            double re = 0, im = 0;
+            for (int i = n / 2; i < n; i++) { re += v[2 * i] * std::cos(2 * PI * f * i / sr); im += v[2 * i] * std::sin(2 * PI * f * i / sr); }
+            return 20 * std::log10(std::sqrt(re * re + im * im) / (n / 4) + 1e-12);
+        };
+        const double alias = goertzel(900) - goertzel(15000);
+        check(alias < -40, "vocal air at 44.1 kHz: folded 3rd harmonic below -40 dB", alias);
+    }
+    {
+        // Turning it on mid-tone doesn't click.
+        auto in = sine(1000, -12, 1.0);
+        Chain c(SR, 2);
+        Params p; c.setParams(p);
+        auto out = in;
+        const int half = (int) (out.size() / 4);
+        c.process(out.data(), half);
+        p.vocalOn = true; p.presencePercent = p.detailPercent = p.airPercent = 100;
+        c.setParams(p);
+        c.process(out.data() + 2 * half, (int) (out.size() / 2) - half);
+        double maxStep = 0, steady = 0;
+        for (size_t i = 2; i < out.size(); i += 2) {
+            const double d = std::fabs(out[i] - out[i - 2]);
+            if ((int) (i / 2) > half - 100 && (int) (i / 2) < half + 4800) maxStep = std::fmax(maxStep, d);
+            if ((int) (i / 2) > (int) (0.9 * SR)) steady = std::fmax(steady, d);
+        }
+        check(maxStep <= steady * 1.05, "turning vocal restoration on: no step bigger than steady state", maxStep / steady);
+    }
+    // Stable and finite from 44.1 kHz to 768 kHz, mono too.
+    for (double rate : {44100.0, 768000.0}) {
+        for (int ch : {1, 2}) {
+            Params p; p.vocalOn = true; p.presencePercent = p.detailPercent = p.airPercent = 100;
+            Chain c(rate, ch); c.setParams(p);
+            const int n = (int) rate;
+            std::vector<float> v((size_t) ch * n);
+            for (int i = 0; i < n; i++)
+                for (int k = 0; k < ch; k++) v[(size_t) ch * i + k] = (float) (0.5 * std::sin(2 * PI * (300 + 9000 * (i % 997) / 997.0) * i / rate));
+            c.process(v.data(), n);
+            bool ok = true;
+            for (float x : v) ok = ok && std::isfinite(x) && std::fabs(x) < 4.0f;
+            char label[80];
+            std::snprintf(label, sizeof label, "vocal 100 %% stable at %.1f kHz, %d ch", rate / 1000, ch);
+            check(ok, label, 0);
+        }
     }
 
     std::printf(failures ? "%d DSP test(s) FAILED\n" : "DSP tests passed\n", failures);

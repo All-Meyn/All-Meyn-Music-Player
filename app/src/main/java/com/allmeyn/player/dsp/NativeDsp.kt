@@ -9,7 +9,7 @@ object NativeDsp {
     }
 
     /** Number of floats [process] writes into its meters array. */
-    const val METER_COUNT = 10
+    const val METER_COUNT = 11
 
     @JvmStatic external fun create(sampleRate: Int, channels: Int): Long
     @JvmStatic external fun destroy(handle: Long)

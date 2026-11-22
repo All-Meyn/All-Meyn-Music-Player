@@ -9,18 +9,30 @@ import org.junit.Test
 class DspParamsTest {
     @Test fun clampsAndFixesOrder() {
         val p = DspParams(expansionPercent = -80f, transitionDb = 5f, impactReleaseMs = 1f, volumeDb = 30f,
+            presencePercent = 150f, detailPercent = -5f, airPercent = 101f,
             order = listOf(DspProcessor.IMPACT, DspProcessor.IMPACT)).sanitized()
         assertEquals(-50f, p.expansionPercent)
         assertEquals(0f, p.transitionDb)
         assertEquals(25f, p.impactReleaseMs)
         assertEquals(10f, p.volumeDb)
-        assertEquals(listOf(DspProcessor.IMPACT, DspProcessor.COMPANDER, DspProcessor.BASS), p.order)
+        assertEquals(100f, p.presencePercent)
+        assertEquals(0f, p.detailPercent)
+        assertEquals(100f, p.airPercent)
+        assertEquals(listOf(DspProcessor.IMPACT, DspProcessor.COMPANDER, DspProcessor.BASS, DspProcessor.VOCAL), p.order)
+    }
+
+    // An order saved before Vocal & Detail Restoration existed loads with it appended last.
+    @Test fun oldSavedOrderGetsVocalAppended() {
+        val p = DspParams(order = listOf(DspProcessor.BASS, DspProcessor.IMPACT, DspProcessor.COMPANDER)).sanitized()
+        assertEquals(listOf(DspProcessor.BASS, DspProcessor.IMPACT, DspProcessor.COMPANDER, DspProcessor.VOCAL), p.order)
     }
 
     @Test fun processesOnlyWhenOnAndSomethingToDo() {
         assertFalse(DspParams(enabled = false).processes)
         assertFalse(DspParams(enabled = true, companderOn = false, bassOn = false, impactOn = false).processes)
         assertTrue(DspParams(enabled = true, companderOn = false, volumeDb = -3f).processes)
+        assertTrue(DspParams(enabled = true, companderOn = false, vocalOn = true).processes)
+        assertFalse(DspParams(enabled = false, vocalOn = true).processes)
         assertTrue(DspParams(enabled = true).processes) // compressor/expander on by default
     }
 
@@ -28,9 +40,10 @@ class DspParamsTest {
         val p = DspParams(companderOn = true, expansionPercent = -20f, transitionDb = -25f, hfTransitionDb = 2f,
             bassOn = false, bassPercent = 40f, bassTransitionDb = -18f, impactOn = true, impactPercent = 75f,
             impactReleaseMs = 300f, volumeDb = -2f, softClip = true,
-            order = listOf(DspProcessor.BASS, DspProcessor.IMPACT, DspProcessor.COMPANDER))
-        assertArrayEquals(floatArrayOf(1f, -20f, -25f, 2f, 0f, 40f, -18f, 1f, 75f, 300f, -2f, 1f), p.toNativeValues(), 0f)
-        assertArrayEquals(intArrayOf(1, 2, 0), p.toNativeOrder())
+            vocalOn = true, presencePercent = 60f, detailPercent = 30f, airPercent = 10f,
+            order = listOf(DspProcessor.VOCAL, DspProcessor.BASS, DspProcessor.IMPACT, DspProcessor.COMPANDER))
+        assertArrayEquals(floatArrayOf(1f, -20f, -25f, 2f, 0f, 40f, -18f, 1f, 75f, 300f, -2f, 1f, 1f, 60f, 30f, 10f), p.toNativeValues(), 0f)
+        assertArrayEquals(intArrayOf(3, 1, 2, 0), p.toNativeOrder())
     }
 
     @Test fun ratioLabel() {
@@ -45,6 +58,7 @@ class DspParamsTest {
         assertEquals(4f, m.bassDb)
         assertArrayEquals(floatArrayOf(5f, 6f, 7f, 8f), m.impactDb, 0f)
         assertEquals(9f, m.outputPeak)
+        assertEquals(10f, m.vocalDb)
     }
 
     // These labels once used a format string containing "% (", which crashed the DSP screen.

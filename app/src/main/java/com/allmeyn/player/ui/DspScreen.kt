@@ -115,6 +115,19 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
                 BandMeters(meters?.impactDb, 0f, 12f)
             }
         }
+        item(key = "vocal") {
+            Section(DspProcessor.VOCAL.label, on = p.enabled && p.vocalOn) {
+                LabeledSlider("Presence", "${p.presencePercent.roundToInt()} %", p.presencePercent, 0f..100f, 1f) { v -> onChange { it.copy(presencePercent = v) } }
+                LabeledSlider("Detail", "${p.detailPercent.roundToInt()} %", p.detailPercent, 0f..100f, 1f) { v -> onChange { it.copy(detailPercent = v) } }
+                LabeledSlider("Air", "${p.airPercent.roundToInt()} %", p.airPercent, 0f..100f, 1f) { v -> onChange { it.copy(airPercent = v) } }
+                Text(
+                    "Works on the centre of the mix, where vocals sit. Presence: crisper consonants and attacks. " +
+                        "Detail: lifts quiet passages a little. Air: adds sparkle above 9 kHz.",
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                GainMeter("Vocal", meters?.vocalDb ?: 0f, -20f, 6f)
+            }
+        }
         item(key = "output") {
             Section("Output", on = p.enabled) {
                 LabeledSlider("Volume", "${signed(p.volumeDb)} dB", p.volumeDb, -40f..10f, 0.5f) { v -> onChange { it.copy(volumeDb = v) } }
@@ -138,12 +151,14 @@ private fun isOn(p: DspParams, proc: DspProcessor) = when (proc) {
     DspProcessor.COMPANDER -> p.companderOn
     DspProcessor.BASS -> p.bassOn
     DspProcessor.IMPACT -> p.impactOn
+    DspProcessor.VOCAL -> p.vocalOn
 }
 
 private fun setOn(p: DspParams, proc: DspProcessor, on: Boolean) = when (proc) {
     DspProcessor.COMPANDER -> p.copy(companderOn = on)
     DspProcessor.BASS -> p.copy(bassOn = on)
     DspProcessor.IMPACT -> p.copy(impactOn = on)
+    DspProcessor.VOCAL -> p.copy(vocalOn = on)
 }
 
 private fun signed(v: Float) = if (v > 0f) "+%.1f".format(v).removeSuffix(".0") else "%.1f".format(v).removeSuffix(".0")

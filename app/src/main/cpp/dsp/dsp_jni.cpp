@@ -32,13 +32,15 @@ JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_reset(JNIEnv*, jcla
 
 /**
  * values: [companderOn, expansion%, transitionDb, hfTransitionDb, bassOn, bass%, bassTransitionDb,
- *          impactOn, impact%, impactReleaseMs, volumeDb, softClip]; order: 3 processor ids.
+ *          impactOn, impact%, impactReleaseMs, volumeDb, softClip, vocalOn, presence%, detail%,
+ *          air%]; order: kNumProcessors processor ids.
  */
 JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_setParams(JNIEnv* env, jclass, jlong h, jfloatArray values, jintArray order) {
-    if (h == 0 || env->GetArrayLength(values) < 12 || env->GetArrayLength(order) < kNumProcessors) return;
-    jfloat v[12];
+    constexpr int kValues = 16;
+    if (h == 0 || env->GetArrayLength(values) < kValues || env->GetArrayLength(order) < kNumProcessors) return;
+    jfloat v[kValues];
     jint o[kNumProcessors];
-    env->GetFloatArrayRegion(values, 0, 12, v);
+    env->GetFloatArrayRegion(values, 0, kValues, v);
     env->GetIntArrayRegion(order, 0, kNumProcessors, o);
     Params p;
     p.companderOn = v[0] != 0;
@@ -53,6 +55,10 @@ JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_setParams(JNIEnv* e
     p.impactReleaseMs = v[9];
     p.volumeDb = v[10];
     p.softClip = v[11] != 0;
+    p.vocalOn = v[12] != 0;
+    p.presencePercent = v[13];
+    p.detailPercent = v[14];
+    p.airPercent = v[15];
     for (int i = 0; i < kNumProcessors; i++) p.order[i] = o[i];
     chainOf(h)->setParams(p);
 }
