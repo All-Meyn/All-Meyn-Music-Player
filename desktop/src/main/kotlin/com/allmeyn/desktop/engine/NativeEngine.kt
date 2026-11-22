@@ -38,9 +38,16 @@ object NativeEngine {
     @JvmStatic private external fun ffmpegVersion(): String
     @JvmStatic private external fun ffmpegComponents(): Array<String>
     @JvmStatic private external fun outputDevices(): Array<String>
+    @JvmStatic private external fun asioDrivers(): Array<String>
+
+    /** Installed ASIO drivers, by name (reads the registry: call off the UI thread). */
+    fun asioDriverNames(): List<String> = if (isReady) asioDrivers().toList() else emptyList()
 
     // ---- player (only call when isReady) ----
-    /** Output for songs opened from now on: device ("" = default), exclusive (bit-perfect) or shared, DSD as DoP. */
+    /**
+     * Output for songs opened from now on: device ("" = default, "asio:<name>" = an ASIO driver),
+     * exclusive (bit-perfect) or shared, DSD as DoP. ASIO tries native DSD first.
+     */
     @JvmStatic external fun playerSetOutput(deviceId: String, exclusive: Boolean, dop: Boolean)
     /** Opens a song paused at the start: null, or why it can't be played. Blocks briefly (file + device). */
     @JvmStatic external fun playerOpen(path: String): String?

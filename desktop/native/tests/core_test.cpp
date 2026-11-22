@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/player.h"
+#include "core/dsd_feed.h"
 #include "core/sample_convert.h"
 #include "core/source.h"
 #include "core/tags.h"
@@ -381,7 +382,7 @@ static void testConversion() {
 static void testDop() {
     std::string err;
     const std::string dsf = writeDsf(0.5);
-    auto s = openSource(dsf, err, /*dop=*/true);
+    auto s = openSource(dsf, err, DsdMode::Dop);
     check(s && s->info().dop && s->info().sampleRate == 176400 && s->info().bitsPerSample == 24, "DoP: DSD64 opens as 176.4 kHz 24-bit DoP " + err);
     if (!s) return;
     std::vector<float> f(1000 * 2);
@@ -417,6 +418,122 @@ static void testDop() {
     player.close();
 }
 
+// ---- native DSD (ASIO) -----------------------------------------------------------------------------
+static void testNativeDsd() {
+    std::string err;
+    // A DSF with a recognisable pattern: channel 0 bytes 0,1,2,... channel 1 bytes 255,254,...
+    const std::string path = "/tmp/allmeyn_native.dsf";
+    {
+        const uint32_t block = 4096;
+        const uint64_t bytesPerCh = 2 * block;
+        FILE* f = std::fopen(path.c_str(), "wb");
+        auto u32 = [&](uint32_t v) { for (int i = 0; i < 4; i++) std::fputc((int) (v >> (8 * i)) & 0xFF, f); };
+        auto u64 = [&](uint64_t v) { for (int i = 0; i < 8; i++) std::fputc((int) (v >> (8 * i)) & 0xFF, f); };
+        std::fwrite("DSD ", 1, 4, f); u64(28); u64(28 + 52 + 12 + bytesPerCh * 2); u64(0);
+        std::fwrite("fmt ", 1, 4, f); u64(52); u32(1); u32(0); u32(2); u32(2); u32(2822400); u32(1);
+        u64(bytesPerCh * 8); u32(block); u32(0);
+        std::fwrite("data", 1, 4, f); u64(12 + bytesPerCh * 2);
+        for (uint64_t b = 0; b < 2; b++)
+            for (int c = 0; c < 2; c++)
+                for (uint32_t i = 0; i < block; i++) std::fputc(c == 0 ? (int) ((b * block + i) & 0xFF) : (int) (255 - ((b * block + i) & 0xFF)), f);
+        std::fclose(f);
+    }
+    auto s = openSource(path, err, DsdMode::Native);
+    check(s && s->info().nativeDsd && s->info().channels == 2 && s->info().dsdRate == 2822400 && s->info().sampleRate == 88200,
+          "native DSD: DSD64 opens as raw words, 2 channels, 88.2k words/s " + err);
+    if (!s) return;
+    std::vector<float> words(2048 * 2);
+    const int n = s->read(words.data(), 2048);
+    const uint8_t* raw = reinterpret_cast<const uint8_t*>(words.data());
+    bool ordered = n == 2048;
+    for (int f = 0; f < n && ordered; f++)
+        for (int k = 0; k < 4; k++) {
+            // DSF is LSB-first: the decoder bit-reverses into MSB-first words, oldest byte first.
+            const uint8_t want0 = reverseBits((uint8_t) ((f * 4 + k) & 0xFF)), want1 = reverseBits((uint8_t) (255 - ((f * 4 + k) & 0xFF)));
+            ordered &= raw[(f * 2 + 0) * 4 + k] == want0 && raw[(f * 2 + 1) * 4 + k] == want1;
+        }
+    check(ordered, "native DSD: words carry each channel's DSD bytes in order (MSB-first)");
+
+    // Through the player and its ring (float slots, only copied): bytes intact.
+    FakeOutput* fake = nullptr;
+    bool refuseNative = false, refuseExact = false;
+    struct NativeFake : FakeOutput {
+        bool* noNative; bool* noExact;
+        bool open(const StreamFormat& f, PullFn p, std::string& e) override {
+            if ((f.nativeDsd && *noNative) || (f.bitExact && *noExact)) { e = "refused"; return false; }
+            format = f; pull = std::move(p); return true;
+        }
+    };
+    Player player([&] { auto o = std::make_unique<NativeFake>(); o->noNative = &refuseNative; o->noExact = &refuseExact; fake = o.get(); return o; });
+    player.setDsdModes(/*dop=*/true, /*native=*/true);
+    check(player.open(path, err) && fake->format.nativeDsd && fake->format.dsdRate == 2822400 && fake->format.bitExact,
+          "native DSD: player opens native first when allowed");
+    player.play();
+    std::vector<float> got;
+    std::vector<float> buf(256 * 2);
+    for (int tries = 0; got.size() < 2048 * 2 && tries < 4000; tries++) {
+        const int k = fake->pull(buf.data(), 256);
+        got.insert(got.end(), buf.begin(), buf.begin() + k * 2);
+        if (k == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    check(got.size() == 2048 * 2 && !memcmp(got.data(), words.data(), got.size() * sizeof(float)), "native DSD: bytes arrive intact through the player's ring");
+    refuseNative = true;
+    check(player.open(path, err) && fake->format.bitExact && !fake->format.nativeDsd && player.info().dop, "native DSD: refused -> DoP");
+    refuseExact = true;
+    check(player.open(path, err) && !fake->format.bitExact && !player.info().dop && !player.info().nativeDsd, "native DSD: DoP refused too -> PCM");
+    player.close();
+
+    // The feeder: any byte count per call, leftovers kept, LSB-first reversal, silence on underrun.
+    std::vector<float> src(words);
+    size_t pos = 0;
+    PullFn pull = [&](float* out, int frames) {
+        const int k = (int) std::min<size_t>((size_t) frames, src.size() / 2 - pos);
+        memcpy(out, src.data() + pos * 2, (size_t) k * 2 * sizeof(float));
+        pos += k;
+        return k;
+    };
+    DsdFeeder feeder;
+    feeder.init(2);
+    std::vector<uint8_t> ch0, ch1;
+    bool sizesOk = true;
+    for (int bytes : {3, 7, 1, 512, 13, 1000, 4096}) {
+        std::vector<uint8_t> a(bytes), b(bytes);
+        uint8_t* outs[2] = {a.data(), b.data()};
+        sizesOk &= feeder.fill(pull, outs, bytes, false) == bytes;
+        ch0.insert(ch0.end(), a.begin(), a.end());
+        ch1.insert(ch1.end(), b.begin(), b.end());
+    }
+    bool streams = sizesOk;
+    for (size_t i = 0; i < ch0.size() && streams; i++) streams &= ch0[i] == raw[(i / 4 * 2 + 0) * 4 + i % 4] && ch1[i] == raw[(i / 4 * 2 + 1) * 4 + i % 4];
+    check(streams, "DSD feeder: odd buffer sizes give one continuous byte stream per channel");
+    std::vector<uint8_t> a(64), b(64);
+    uint8_t* outs[2] = {a.data(), b.data()};
+    pos = 0;
+    feeder.init(2);
+    feeder.fill(pull, outs, 64, /*lsbFirst=*/true);
+    check(a[0] == reverseBits(raw[0]) && b[5] == reverseBits(raw[(1 * 2 + 1) * 4 + 1]), "DSD feeder: LSB-first drivers get each byte bit-reversed");
+    pos = src.size() / 2;  // nothing left
+    const int real = feeder.fill(pull, outs, 64, false);
+    check(real == 0 && a[0] == kDsdSilence && b[63] == kDsdSilence, "DSD feeder: underrun fills DSD silence (0x69), not zeros");
+}
+
+static void testPlanar() {
+    // ASIO buffers: one per channel. Stereo 24-bit stays exact; mono goes to both outputs.
+    const float in[6] = {1.0f / 8388608, -2.0f / 8388608, 3.0f / 8388608, -4.0f / 8388608, 0.5f, -0.5f};
+    uint8_t l[9], r[9];
+    uint8_t* outs[2] = {l, r};
+    std::vector<float> scratch;
+    convertToPlanar(in, 2, 3, outs, 2, SampleFormat::Int24Packed, scratch);
+    auto s24 = [](const uint8_t* p) { return (int32_t) ((uint32_t) p[0] << 8 | (uint32_t) p[1] << 16 | (uint32_t) p[2] << 24) >> 8; };
+    check(s24(l) == 1 && s24(r) == -2 && s24(l + 3) == 3 && s24(r + 3) == -4 && s24(l + 6) == 4194304 && s24(r + 6) == -4194304,
+          "planar: stereo split per channel, 24-bit exact");
+    int16_t a[3], b[3];
+    uint8_t* outs16[2] = {reinterpret_cast<uint8_t*>(a), reinterpret_cast<uint8_t*>(b)};
+    const float mono[3] = {0.25f, -0.25f, 1.0f / 32768};
+    convertToPlanar(mono, 1, 3, outs16, 2, SampleFormat::Int16, scratch);
+    check(a[0] == 8192 && b[0] == 8192 && a[1] == -8192 && b[2] == 1, "planar: mono plays on both outputs");
+}
+
 int main() {
     testLossless("clip16.flac", "FLAC", 16, kHash16);
     testLossless("clip24.flac", "FLAC", 24, kHash24);
@@ -437,6 +554,8 @@ int main() {
     testTags();
     testConversion();
     testDop();
+    testNativeDsd();
+    testPlanar();
     std::printf(failures ? "%d desktop core test(s) FAILED\n" : "desktop core tests passed\n", failures);
     return failures ? 1 : 0;
 }

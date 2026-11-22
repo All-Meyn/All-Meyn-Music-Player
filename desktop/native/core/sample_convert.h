@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <vector>
 
 namespace allmeyn {
 
@@ -83,6 +84,27 @@ inline float int24ToFloat(const uint8_t* p) {
     int32_t v = p[0] | (p[1] << 8) | (p[2] << 16);
     if (v & 0x800000) v -= 0x1000000;
     return (float) v / 8388608.0f;
+}
+
+}  // namespace allmeyn
+
+namespace allmeyn {
+
+/**
+ * Interleaved float frames -> one buffer per output channel (ASIO), in [f]. A mono source goes to
+ * every output; otherwise output c gets source channel c. [scratch] is reused (no allocation once
+ * it's big enough).
+ */
+inline void convertToPlanar(const float* in, int channels, int frames, uint8_t* const* outs, int outChannels,
+                            SampleFormat f, std::vector<float>& scratch) {
+    if (scratch.size() < (size_t) frames) scratch.resize((size_t) frames);
+    const size_t bytes = (size_t) bytesPerSample(f);
+    for (int c = 0; c < outChannels; c++) {
+        const int src = channels == 1 ? 0 : c;
+        if (src >= channels) { memset(outs[c], 0, (size_t) frames * bytes); continue; }
+        for (int i = 0; i < frames; i++) scratch[(size_t) i] = in[(size_t) i * channels + src];
+        convertFromFloat(scratch.data(), outs[c], (size_t) frames, f);
+    }
 }
 
 }  // namespace allmeyn

@@ -34,8 +34,12 @@ public:
      */
     bool setNext(const std::string& utf8Path, std::string& error);
     void clearNext();
-    /** DSD as DoP when the output can take it bit-exact (else PCM). Applies to songs opened next. */
-    void setDopAllowed(bool allowed) { dopAllowed_ = allowed; }
+    /**
+     * How DSD may reach the output, best first: native (an output that does native DSD), DoP (a
+     * bit-exact output), else PCM. Applies to songs opened next.
+     */
+    void setDsdModes(bool dop, bool native) { dopAllowed_ = dop; nativeAllowed_ = native; }
+    void setDopAllowed(bool allowed) { setDsdModes(allowed, false); }
     void play();
     void pause();
     /** Jumps to [frame] of the song being heard (sample-accurate); keeps playing or paused. */
@@ -84,8 +88,9 @@ private:
     std::atomic<bool> sourceEnded_{false};
     std::atomic<int64_t> written_{0};      // frames written to the ring since open/seek
     std::atomic<int> streamRate_{0}, streamChannels_{0};  // the stream's format (fixed per open)
-    std::atomic<bool> streamDop_{false};
-    std::atomic<bool> dopAllowed_{false};
+    std::atomic<bool> streamDop_{false}, streamNative_{false};
+    std::atomic<bool> dopAllowed_{false}, nativeAllowed_{false};
+    DsdMode bestDsdMode() const { return nativeAllowed_ ? DsdMode::Native : dopAllowed_ ? DsdMode::Dop : DsdMode::Pcm; }
 
     mutable std::mutex nextLock_;
     std::unique_ptr<Source> next_;

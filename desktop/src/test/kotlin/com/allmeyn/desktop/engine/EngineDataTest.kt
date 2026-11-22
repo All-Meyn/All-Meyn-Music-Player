@@ -21,6 +21,15 @@ class EngineDataTest {
         assertEquals("format unknown", d.mixLabel)
     }
 
+    @Test fun asioOutputsAreMarkedAndAllowDopWithoutExclusive() {
+        val asio = OutputSettings(deviceId = OutputSettings.asioId("FiiO ASIO Driver"), exclusive = false)
+        assertTrue(asio.isAsio)
+        assertTrue(asio.dopPossible)
+        assertEquals("asio:FiiO ASIO Driver", asio.deviceId)
+        val shared = OutputSettings(deviceId = "{0.0.0.00000000}.{abc}", exclusive = false)
+        assertTrue(!shared.isAsio && !shared.dopPossible)
+    }
+
     @Test fun formatsRates() {
         assertEquals("44.1 kHz", OutputDevice.formatRate(44100))
         assertEquals("352.8 kHz", OutputDevice.formatRate(352800))

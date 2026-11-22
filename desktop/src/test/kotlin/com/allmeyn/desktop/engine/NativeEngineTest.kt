@@ -77,5 +77,7 @@ class NativeEngineTest {
         // CI machines may have no audio device at all; this only proves COM/WASAPI calls are safe.
         val devices = NativeEngine.devices()
         println("Outputs: " + devices.joinToString { "${it.name} (${it.mixLabel})" })
+        // Usually none on CI; proves the JNI link and the registry read are safe.
+        println("ASIO drivers: " + NativeEngine.asioDriverNames())
     }
 }

@@ -195,12 +195,18 @@ public:
         info_.sampleRate = d->info.sample_rate;
         info_.channels = d->info.channels;
         info_.dop = d->info.is_dop != 0;
-        info_.bitsPerSample = info_.dop ? 24 : 0;
+        info_.nativeDsd = d->info.is_native != 0;
+        info_.bitsPerSample = info_.dop ? 24 : (info_.nativeDsd ? 1 : 0);
+        if (info_.nativeDsd) {
+            info_.channels = d->info.channels / 2;  // the decoder counts 16-bit halves of each 32-bit word
+            info_.dsdRate = d->info.sample_rate * 32;
+        }
         info_.totalFrames = d->info.total_frames;
         info_.codec = d->info.desc;  // e.g. "DSF DSD64 → PCM 176.4 kHz" / "DSF DSD64 → DoP 176.4 kHz ..."
     }
     ~DsdSource() override { d_->close(d_); }
     int read(float* out, int maxFrames) override {
+        // PCM is float already; native DSD is raw words (4 bytes = one float slot per channel).
         if (!info_.dop) return d_->read(d_, reinterpret_cast<uint8_t*>(out), maxFrames);
         // DoP: packed 24-bit words -> float, exactly (the output turns them back into the same words).
         packed_.resize((size_t) maxFrames * info_.channels * 3);
@@ -230,17 +236,18 @@ bool looksLikeDsd(const std::string& path) {
 
 bool isDsdFile(const std::string& path) { return looksLikeDsd(path); }
 
-std::unique_ptr<Source> openSource(const std::string& path, std::string& error, bool dop) {
+std::unique_ptr<Source> openSource(const std::string& path, std::string& error, DsdMode dsd) {
     av_log_set_level(AV_LOG_ERROR);  // FFmpeg's notes on odd files aren't errors; keep stderr quiet
     if (looksLikeDsd(path)) {
         const int fd = openForRead(path);
         if (fd < 0) { error = "Can't open the file"; return nullptr; }
         char err[160] = {};
-        // DoP only when the output is bit-exact (the player decides); native DSD needs ASIO.
-        Decoder* d = dsd_open(fd, dop ? 1 : 0, /*native_max_rate=*/0, err, sizeof err);
+        // DoP / native only when the output takes them bit-exact (the player decides). Native needs
+        // stereo; the decoder falls back to PCM otherwise.
+        Decoder* d = dsd_open(fd, dsd == DsdMode::Dop ? 1 : 0, dsd == DsdMode::Native ? 0xFFFFFFFFu : 0, err, sizeof err);
         if (!d) { error = err[0] ? err : "Not a playable DSD file"; return nullptr; }
-        const int expect = d->info.is_dop ? DEC_S24 : DEC_F32;
-        if (d->info.format != expect || d->info.channels < 1 || d->info.channels > kMaxChannels) {
+        const int expect = d->info.is_native ? DEC_S16 : d->info.is_dop ? DEC_S24 : DEC_F32;
+        if (d->info.format != expect || d->info.channels < 1 || d->info.channels > 2 * kMaxChannels) {
             d->close(d);
             error = "Unsupported DSD layout";
             return nullptr;
