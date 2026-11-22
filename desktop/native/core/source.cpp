@@ -6,6 +6,7 @@
 
 #include "../platform/file_open.h"
 #include "codec_names.h"
+#include "sample_convert.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -193,16 +194,25 @@ public:
     explicit DsdSource(Decoder* d) : d_(d) {
         info_.sampleRate = d->info.sample_rate;
         info_.channels = d->info.channels;
-        info_.bitsPerSample = 0;
+        info_.dop = d->info.is_dop != 0;
+        info_.bitsPerSample = info_.dop ? 24 : 0;
         info_.totalFrames = d->info.total_frames;
-        info_.codec = d->info.desc;  // e.g. "DSF DSD64 → PCM 176.4 kHz"
+        info_.codec = d->info.desc;  // e.g. "DSF DSD64 → PCM 176.4 kHz" / "DSF DSD64 → DoP 176.4 kHz ..."
     }
     ~DsdSource() override { d_->close(d_); }
-    int read(float* out, int maxFrames) override { return d_->read(d_, reinterpret_cast<uint8_t*>(out), maxFrames); }
+    int read(float* out, int maxFrames) override {
+        if (!info_.dop) return d_->read(d_, reinterpret_cast<uint8_t*>(out), maxFrames);
+        // DoP: packed 24-bit words -> float, exactly (the output turns them back into the same words).
+        packed_.resize((size_t) maxFrames * info_.channels * 3);
+        const int n = d_->read(d_, packed_.data(), maxFrames);
+        for (int i = 0; i < n * info_.channels; i++) out[i] = int24ToFloat(packed_.data() + 3 * i);
+        return n;
+    }
     bool seek(int64_t frame) override { return d_->seek(d_, frame) == 0; }
 
 private:
     Decoder* d_;
+    std::vector<uint8_t> packed_;
 };
 
 bool looksLikeDsd(const std::string& path) {
@@ -218,16 +228,19 @@ bool looksLikeDsd(const std::string& path) {
 
 }  // namespace
 
-std::unique_ptr<Source> openSource(const std::string& path, std::string& error) {
+bool isDsdFile(const std::string& path) { return looksLikeDsd(path); }
+
+std::unique_ptr<Source> openSource(const std::string& path, std::string& error, bool dop) {
     av_log_set_level(AV_LOG_ERROR);  // FFmpeg's notes on odd files aren't errors; keep stderr quiet
     if (looksLikeDsd(path)) {
         const int fd = openForRead(path);
         if (fd < 0) { error = "Can't open the file"; return nullptr; }
         char err[160] = {};
-        // W2: always PCM (DoP / native DSD need exclusive output: W4).
-        Decoder* d = dsd_open(fd, /*dop=*/0, /*native_max_rate=*/0, err, sizeof err);
+        // DoP only when the output is bit-exact (the player decides); native DSD needs ASIO.
+        Decoder* d = dsd_open(fd, dop ? 1 : 0, /*native_max_rate=*/0, err, sizeof err);
         if (!d) { error = err[0] ? err : "Not a playable DSD file"; return nullptr; }
-        if (d->info.format != DEC_F32 || d->info.channels < 1 || d->info.channels > kMaxChannels) {
+        const int expect = d->info.is_dop ? DEC_S24 : DEC_F32;
+        if (d->info.format != expect || d->info.channels < 1 || d->info.channels > kMaxChannels) {
             d->close(d);
             error = "Unsupported DSD layout";
             return nullptr;

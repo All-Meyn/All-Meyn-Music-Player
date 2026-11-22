@@ -17,10 +17,21 @@ Player::~Player() { close(); }
 
 bool Player::open(const std::string& path, std::string& error) {
     close();
-    auto source = openSource(path, error);
+    auto source = openSource(path, error, dopAllowed_ && isDsdFile(path));
     if (!source) return false;
-    const SourceInfo info = source->info();
     auto output = outputs_();
+    auto tryOutput = [&](const SourceInfo& i, std::string& err) {
+        const StreamFormat fmt{i.sampleRate, i.channels, i.bitsPerSample, i.dop};
+        return output->open(fmt, [this](float* out, int n) { return pull(out, n); }, err);
+    };
+    if (!tryOutput(source->info(), error)) {
+        if (!source->info().dop) return false;
+        // DoP must reach the DAC untouched; this output can't promise that: play the DSD as PCM.
+        source = openSource(path, error, false);
+        output = outputs_();
+        if (!source || !tryOutput(source->info(), error)) return false;
+    }
+    const SourceInfo info = source->info();
     ring_.init(std::max(kChunkFrames * 2, (int) (info.sampleRate * kRingSeconds)), info.channels);
     base_ = 0;
     consumed_ = 0;
@@ -30,6 +41,7 @@ bool Player::open(const std::string& path, std::string& error) {
     quit_ = false;
     streamRate_ = info.sampleRate;
     streamChannels_ = info.channels;
+    streamDop_ = info.dop;
     source_ = std::move(source);
     {
         std::lock_guard<std::mutex> g(trackLock_);
@@ -42,19 +54,14 @@ bool Player::open(const std::string& path, std::string& error) {
         std::lock_guard<std::mutex> g(errorLock_);
         error_.clear();
     }
-    decoder_ = std::thread(&Player::decodeLoop, this);
-    if (!output->open(info.sampleRate, info.channels, [this](float* out, int n) { return pull(out, n); }, error)) {
-        stopThreads();
-        source_.reset();
-        return false;
-    }
     output_ = std::move(output);
+    decoder_ = std::thread(&Player::decodeLoop, this);
     state_ = (int) PlayerState::Paused;
     return true;
 }
 
 bool Player::setNext(const std::string& path, std::string& error) {
-    auto next = openSource(path, error);
+    auto next = openSource(path, error, dopAllowed_);
     if (!next) return false;
     std::lock_guard<std::mutex> g(nextLock_);
     next_ = std::move(next);
@@ -70,7 +77,8 @@ void Player::clearNext() {
 }
 
 bool Player::nextIsCompatible() const {
-    return next_ && next_->info().sampleRate == streamRate_.load() && next_->info().channels == streamChannels_.load();
+    return next_ && next_->info().sampleRate == streamRate_.load() && next_->info().channels == streamChannels_.load() &&
+           next_->info().dop == streamDop_.load();
 }
 
 void Player::play() {
@@ -204,7 +212,7 @@ void Player::decodeLoop() {
             if (reopen) {
                 // source_ is already the next song: reopen the heard one and keep this as the next.
                 std::string err;
-                auto again = openSource(heard.path, err);
+                auto again = openSource(heard.path, err, heard.dop);
                 if (again) {
                     source_->seek(0);
                     std::lock_guard<std::mutex> n(nextLock_);

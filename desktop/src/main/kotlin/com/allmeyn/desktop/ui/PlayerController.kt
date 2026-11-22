@@ -71,6 +71,12 @@ class PlayerController(private val scope: CoroutineScope) {
         openCurrent()
     }
 
+    /** Opens the current song again where it was (after the output settings changed). */
+    fun reopen() {
+        if (current == null || busy > 0) return
+        openCurrent(startMs = positionMs, autoplay = state == PlayState.PLAYING)
+    }
+
     fun playNext(track: Track) {
         if (current == null) return play(listOf(track))
         queue = queue.toMutableList().apply { add(index + 1, track) }
@@ -150,7 +156,7 @@ class PlayerController(private val scope: CoroutineScope) {
         if (NativeEngine.isReady) NativeEngine.playerClose()
     }
 
-    private fun openCurrent() {
+    private fun openCurrent(startMs: Long = 0, autoplay: Boolean = true) {
         val track = current ?: return
         if (!NativeEngine.isReady) return
         busy++
@@ -165,10 +171,12 @@ class PlayerController(private val scope: CoroutineScope) {
                     return@launch
                 }
                 error = null
-                positionMs = 0
                 playing = TrackInfo.from(NativeEngine.playerInfo())
                 lastSerial = NativeEngine.playerTrackSerial()
-                NativeEngine.playerPlay()
+                val rate = playing?.sampleRate ?: 0
+                positionMs = if (startMs > 0 && rate > 0) startMs else 0
+                if (positionMs > 0) NativeEngine.playerSeek(positionMs * rate / 1000)
+                if (autoplay) NativeEngine.playerPlay() else state = PlayState.PAUSED
             } finally {
                 busy--
             }

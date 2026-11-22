@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/player.h"
+#include "core/sample_convert.h"
 #include "core/source.h"
 #include "core/tags.h"
 
@@ -164,7 +165,14 @@ static void testDsd() {
 // ---- player, driven by a fake output -----------------------------------------------------------------
 struct FakeOutput : Output {
     PullFn pull;
-    bool open(int, int, PullFn p, std::string&) override { pull = std::move(p); return true; }
+    StreamFormat format;
+    bool refuseBitExact = false;  // like shared mode / a busy device
+    bool open(const StreamFormat& f, PullFn p, std::string& err) override {
+        if (f.bitExact && refuseBitExact) { err = "not bit-exact"; return false; }
+        format = f;
+        pull = std::move(p);
+        return true;
+    }
     void setRunning(bool) override {}
     int64_t bufferedFrames() const override { return 0; }
     std::string description() const override { return "fake"; }
@@ -340,6 +348,75 @@ static void testTags() {
           parseLeadingNumber("") == 0 && parseLeadingNumber("2x") == 0, "tags: number parsing matches Android's");
 }
 
+// ---- bit-perfect output and DoP ----------------------------------------------------------------------
+static void testConversion() {
+    // Every 16-bit value survives int -> float -> 16-bit, and -> 32-bit as the same value shifted.
+    bool ok16 = true, ok16in32 = true;
+    for (int s = -32768; s <= 32767; s++) {
+        const float f = (float) s / 32768.0f;
+        int16_t a; int32_t b;
+        convertFromFloat(&f, reinterpret_cast<uint8_t*>(&a), 1, SampleFormat::Int16);
+        convertFromFloat(&f, reinterpret_cast<uint8_t*>(&b), 1, SampleFormat::Int32);
+        ok16 &= a == s;
+        ok16in32 &= b == s * 65536;
+    }
+    check(ok16 && ok16in32, "convert: every 16-bit sample exact (16-bit and 32-bit containers)");
+    // Every 24-bit value survives to 24-in-32 and packed 24 (incl. DoP words like 0x05xxxx / 0xFAxxxx).
+    bool ok24 = true;
+    for (int s = -8388608; s <= 8388607; s += 7) {
+        const uint8_t in[3] = {(uint8_t) s, (uint8_t) (s >> 8), (uint8_t) (s >> 16)};
+        const float f = int24ToFloat(in);
+        int32_t w; uint8_t p[3];
+        convertFromFloat(&f, reinterpret_cast<uint8_t*>(&w), 1, SampleFormat::Int24In32);
+        convertFromFloat(&f, p, 1, SampleFormat::Int24Packed);
+        ok24 &= w == (int32_t) ((uint32_t) s << 8) && !memcmp(p, in, 3);
+    }
+    check(ok24, "convert: 24-bit samples exact (24-in-32 and packed)");
+    const float hot[2] = {1.5f, -1.5f};
+    int16_t c[2];
+    convertFromFloat(hot, reinterpret_cast<uint8_t*>(c), 2, SampleFormat::Int16);
+    check(c[0] == 32767 && c[1] == -32768, "convert: out-of-range floats clip instead of wrapping");
+}
+
+static void testDop() {
+    std::string err;
+    const std::string dsf = writeDsf(0.5);
+    auto s = openSource(dsf, err, /*dop=*/true);
+    check(s && s->info().dop && s->info().sampleRate == 176400 && s->info().bitsPerSample == 24, "DoP: DSD64 opens as 176.4 kHz 24-bit DoP " + err);
+    if (!s) return;
+    std::vector<float> f(1000 * 2);
+    const int n = s->read(f.data(), 1000);
+    std::vector<uint8_t> words((size_t) n * 2 * 3);
+    convertFromFloat(f.data(), words.data(), (size_t) n * 2, SampleFormat::Int24Packed);
+    bool markers = true, idle = true;
+    for (int i = 0; i < n; i++) {
+        const uint8_t want = (i & 1) ? 0xFA : 0x05;
+        for (int c = 0; c < 2; c++) {
+            const uint8_t* w = &words[((size_t) i * 2 + c) * 3];
+            markers &= w[2] == want;
+            // DSF stores DSD LSB-first, DoP carries it MSB-first: silence 0x69 arrives bit-reversed, 0x96.
+            idle &= w[0] == 0x96 && w[1] == 0x96;
+        }
+    }
+    check(n == 1000 && markers && idle, "DoP: markers alternate 0x05/0xFA and the DSD bytes arrive intact");
+
+    // The player asks for a bit-exact stream for DoP; refused (shared mode / busy) -> PCM instead.
+    FakeOutput* fake = nullptr;
+    bool refuse = false;
+    Player player([&] { auto o = std::make_unique<FakeOutput>(); o->refuseBitExact = refuse; fake = o.get(); return o; });
+    player.setDopAllowed(true);
+    check(player.open(dsf, err) && player.info().dop && fake->format.bitExact && fake->format.bits == 24,
+          "DoP: player opens DSD as DoP and requires a bit-exact output");
+    refuse = true;
+    check(player.open(dsf, err) && !player.info().dop && !fake->format.bitExact && player.info().sampleRate == 176400,
+          "DoP: an output that can't be bit-exact gets PCM instead (never DoP into a mixer)");
+    player.setDopAllowed(false);
+    refuse = false;
+    check(player.open(dsf, err) && !player.info().dop, "DoP: off -> DSD plays as PCM");
+    check(player.open(asset("clip24.flac"), err) && fake->format.bits == 24 && !fake->format.bitExact, "output: a 24-bit FLAC asks for 24 bits");
+    player.close();
+}
+
 int main() {
     testLossless("clip16.flac", "FLAC", 16, kHash16);
     testLossless("clip24.flac", "FLAC", 24, kHash24);
@@ -358,6 +435,8 @@ int main() {
     testPlayer();
     testGapless();
     testTags();
+    testConversion();
+    testDop();
     std::printf(failures ? "%d desktop core test(s) FAILED\n" : "desktop core tests passed\n", failures);
     return failures ? 1 : 0;
 }

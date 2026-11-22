@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.allmeyn.desktop.engine.OutputSettings
 import com.allmeyn.desktop.engine.PlayState
 import com.allmeyn.desktop.engine.TrackInfo
 import com.allmeyn.desktop.library.DesktopLibrary
@@ -51,6 +52,7 @@ private val SECTIONS = listOf(
 @Composable
 fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> String?) {
     val scope = rememberCoroutineScope()
+    var output by remember { mutableStateOf(OutputSettings.load().also { it.apply() }) }
     val stack = remember { mutableStateListOf<Route>(Route.Albums) }
     var query by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { library.start() }
@@ -119,7 +121,14 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                         is Route.Folders -> FolderBrowser(view.folders, route.path, player, onOpen = { push(Route.Folders(it)) }, onBack = if (stack.size > 1) ::back else null)
                         Route.Queue -> QueueScreen(player)
                         Route.Settings -> SettingsScreen(
-                            library, onAddFolder = chooseFolder,
+                            library, output,
+                            onOutputChange = { new ->
+                                output = new
+                                new.save()
+                                new.apply()
+                                player.reopen()  // hear the change now, from the same spot
+                            },
+                            onAddFolder = chooseFolder,
                             onRemoveFolder = { scope.launch { library.removeFolder(it) } },
                             onRescan = { scope.launch { library.rescan() } },
                         )
