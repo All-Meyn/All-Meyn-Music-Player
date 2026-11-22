@@ -32,16 +32,19 @@ add_library(allmeyn_core STATIC
     core/source.cpp
     core/player.cpp
     core/tags.cpp
+    core/dsp_stage.cpp
     platform/file_open.cpp
     "${SHARED_CPP}/decoder/dsd.c"
+    "${SHARED_CPP}/dsp/dsp_chain.cpp"
 )
 target_include_directories(allmeyn_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${FFMPEG_DIR}/include"
     "${SHARED_CPP}/decoder"
+    "${SHARED_CPP}/dsp"
 )
 target_compile_definitions(allmeyn_core PRIVATE _FILE_OFFSET_BITS=64)
-set_source_files_properties(core/source.cpp core/player.cpp core/tags.cpp platform/file_open.cpp
+set_source_files_properties(core/source.cpp core/player.cpp core/tags.cpp core/dsp_stage.cpp platform/file_open.cpp
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
 if(WIN32)
     # dsd.c reads with pread(); Windows gets ours, so the shared file stays untouched.

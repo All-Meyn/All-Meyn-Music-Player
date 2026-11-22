@@ -13,6 +13,7 @@
 #include <string>
 #include <thread>
 
+#include "dsp_stage.h"
 #include "output.h"
 #include "ring.h"
 #include "source.h"
@@ -40,6 +41,10 @@ public:
      */
     void setDsdModes(bool dop, bool native) { dopAllowed_ = dop; nativeAllowed_ = native; }
     void setDopAllowed(bool allowed) { setDsdModes(allowed, false); }
+    /** The DSP chain's settings (any time; applies at once). With processing on, DSD opens as PCM. */
+    void setDsp(const DspSettings& s) { dsp_.setSettings(s); }
+    /** The chain's meters while it processes the stream. */
+    bool dspMeters(dsp::Meters& out) const { return dsp_.meters(out); }
     void play();
     void pause();
     /** Jumps to [frame] of the song being heard (sample-accurate); keeps playing or paused. */
@@ -90,7 +95,11 @@ private:
     std::atomic<int> streamRate_{0}, streamChannels_{0};  // the stream's format (fixed per open)
     std::atomic<bool> streamDop_{false}, streamNative_{false};
     std::atomic<bool> dopAllowed_{false}, nativeAllowed_{false};
-    DsdMode bestDsdMode() const { return nativeAllowed_ ? DsdMode::Native : dopAllowed_ ? DsdMode::Dop : DsdMode::Pcm; }
+    DsdMode bestDsdMode() const {
+        if (dsp_.wantsProcessing()) return DsdMode::Pcm;  // the DSP works on PCM
+        return nativeAllowed_ ? DsdMode::Native : dopAllowed_ ? DsdMode::Dop : DsdMode::Pcm;
+    }
+    DspStage dsp_;
 
     mutable std::mutex nextLock_;
     std::unique_ptr<Source> next_;

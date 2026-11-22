@@ -19,7 +19,8 @@ bool Player::open(const std::string& path, std::string& error) {
     close();
     // DSD: the best mode the output takes (native, then DoP: both must arrive untouched), else PCM.
     std::vector<DsdMode> modes{DsdMode::Pcm};
-    if (isDsdFile(path)) {
+    const bool dspOn = dsp_.wantsProcessing();
+    if (isDsdFile(path) && !dspOn) {  // (with the DSP on, DSD plays as PCM)
         modes.clear();
         if (nativeAllowed_) modes.push_back(DsdMode::Native);
         if (dopAllowed_) modes.push_back(DsdMode::Dop);
@@ -31,7 +32,8 @@ bool Player::open(const std::string& path, std::string& error) {
         source = openSource(path, error, mode);
         if (!source) return false;
         const SourceInfo& i = source->info();
-        const StreamFormat fmt{i.sampleRate, i.channels, i.bitsPerSample, i.dop || i.nativeDsd, i.nativeDsd, i.dsdRate};
+        // With the DSP on the samples aren't the file's any more: no bit depth to keep (float-like).
+        const StreamFormat fmt{i.sampleRate, i.channels, dspOn ? 0 : i.bitsPerSample, i.dop || i.nativeDsd, i.nativeDsd, i.dsdRate};
         output = outputs_();
         if (output->open(fmt, [this](float* out, int n) { return pull(out, n); }, error)) break;
         output.reset();
@@ -62,6 +64,7 @@ bool Player::open(const std::string& path, std::string& error) {
         std::lock_guard<std::mutex> g(errorLock_);
         error_.clear();
     }
+    dsp_.configure(info.sampleRate, info.channels, !info.dop && !info.nativeDsd, airHintFor(info));
     output_ = std::move(output);
     decoder_ = std::thread(&Player::decodeLoop, this);
     state_ = (int) PlayerState::Paused;
@@ -114,6 +117,7 @@ void Player::seek(int64_t frame) {
         if (!boundaries_.empty()) reopenHeard_ = true;
         boundaries_.clear();
         trackStart_ = 0;
+        dsp_.restart(airHintFor(heard_));
     }
     frame = std::max<int64_t>(frame, 0);
     {
@@ -133,6 +137,7 @@ void Player::seek(int64_t frame) {
 void Player::close() {
     if (output_) output_->setRunning(false);
     output_.reset();  // stops its thread before the sources go
+    dsp_.release();
     stopThreads();
     source_.reset();
     clearNext();
@@ -189,12 +194,18 @@ std::string Player::error() const {
     return error_;
 }
 
-std::string Player::outputDescription() const { return output_ ? output_->description() : std::string(); }
+std::string Player::outputDescription() const {
+    if (!output_) return {};
+    std::string d = output_->description();
+    if (dsp_.running()) d += " · DSP on";
+    return d;
+}
 
 int Player::pull(float* out, int frames) {
     std::lock_guard<std::mutex> g(readLock_);
     if (seekPending()) return 0;  // the decoder hasn't jumped yet: silence, not stale audio
     const int n = ring_.read(out, frames);
+    if (n > 0) dsp_.process(out, n, consumed_.load());
     consumed_ += n;
     // The end, unless a gapless next song is about to follow.
     if (n < frames && sourceEnded_ && !nextReady_ && ring_.available() == 0 && state_.load() == (int) PlayerState::Playing) {
@@ -271,6 +282,7 @@ void Player::decodeLoop() {
                     std::lock_guard<std::mutex> t(trackLock_);
                     boundaries_.push_back({written_.load(), next->info()});
                 }
+                dsp_.sourceAt(written_.load(), airHintFor(next->info()));
                 source_ = std::move(next);
                 sourceEnded_ = false;
                 continue;

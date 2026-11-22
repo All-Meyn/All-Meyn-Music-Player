@@ -53,6 +53,7 @@ sealed interface Route {
     data object Songs : Route
     data class Folders(val path: String = "") : Route
     data object Queue : Route
+    data object Dsp : Route
     data object Settings : Route
 }
 

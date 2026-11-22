@@ -16,6 +16,8 @@ struct SourceInfo {
     std::string codec;        // "FLAC", "DSD64 (DSF)", ...
     std::string title, artist, album;
     std::string path;         // the file (UTF-8)
+    bool lossy = false;       // MP3, AAC, Vorbis, Opus (for the DSP's Air)
+    int bitrate = 0;          // bits per second, 0 if unknown (lossy only)
     bool dop = false;         // DSD packed as DoP in 24-bit frames: must reach the DAC bit-exact
     // Native DSD: each frame is one 32-bit word of raw DSD per channel (4 bytes, oldest first, MSB =
     // oldest bit), carried in the float slots as raw bits (only copied, never computed on).

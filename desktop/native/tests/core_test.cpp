@@ -1,6 +1,8 @@
 // Host tests for the desktop engine's core (sources + player), with the Android app's test clips.
 // Lossless clips must decode bit-exactly (same SHA-256 of the generated samples as the Android
 // emulator test, DecodedPlaybackTest.FFMPEG_CLIP_HASHES) and seek sample-accurately.
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -534,6 +536,102 @@ static void testPlanar() {
     check(a[0] == 8192 && b[0] == 8192 && a[1] == -8192 && b[2] == 1, "planar: mono plays on both outputs");
 }
 
+// ---- DSP ------------------------------------------------------------------------------------------
+static void testDsp() {
+    // Air hints: the Android table.
+    SourceInfo i;
+    i.channels = 2;
+    check(!airHintFor(i).lossy, "dsp: lossless files give no lossy hint");
+    i.lossy = true; i.codec = "MP3"; i.bitrate = 128000;
+    check(airHintFor(i).lossy && airHintFor(i).priorCutoffHz == 16000, "dsp: 128 kbps MP3 guesses 16 kHz");
+    i.bitrate = 320000;
+    check(airHintFor(i).priorCutoffHz == 0, "dsp: 320 kbps counts as full range");
+    i.bitrate = 64000; i.channels = 1;
+    check(airHintFor(i).priorCutoffHz == 16000, "dsp: mono counts double (64 kbps mono guesses like 128 stereo)", airHintFor(i).priorCutoffHz);
+    i.codec = "Opus"; i.channels = 2;
+    check(airHintFor(i).lossy && airHintFor(i).priorCutoffHz == 0, "dsp: Opus is full band");
+    std::string err;
+    auto mp3 = openSource(asset("clip.mp3"), err);
+    check(mp3 && mp3->info().lossy && mp3->info().bitrate > 0, "dsp: MP3 reports lossy with its bitrate", mp3 ? mp3->info().bitrate : -1);
+
+    FakeOutput* fake = nullptr;
+    Player player([&] { auto o = std::make_unique<FakeOutput>(); fake = o.get(); return o; });
+    auto ref = openSource(asset("clip16.flac"), err);
+    const auto all = decodeAll(*ref);
+    auto pullFrames = [&](int n) {
+        std::vector<float> out;
+        std::vector<float> buf(512 * 2);
+        for (int tries = 0; (int) out.size() < n * 2 && tries < 4000; tries++) {
+            const int got = fake->pull(buf.data(), std::min(512, n - (int) out.size() / 2));
+            out.insert(out.end(), buf.begin(), buf.begin() + got * 2);
+            if (got == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return out;
+    };
+
+    // Master on with only Volume -6.02 dB: exactly half (the first settings snap, no ramp).
+    DspSettings half;
+    half.enabled = true;
+    half.params.volumeDb = -6.0206f;
+    player.setDsp(half);
+    check(player.open(asset("clip16.flac"), err) && fake->format.bits == 0, "dsp: on = no source bit depth to keep (no bit-perfect claim)");
+    player.play();
+    auto out = pullFrames(4000);
+    double worst = 0;
+    for (size_t k = 0; k < out.size(); k++) worst = std::max(worst, (double) std::fabs(out[k] - all[k] * 0.5f));
+    check(out.size() == 8000 && worst < 1e-5, "dsp: volume -6 dB halves the samples", worst);
+    check(player.outputDescription().find("DSP on") != std::string::npos, "dsp: the output line says DSP on");
+    dsp::Meters m{};
+    check(player.dspMeters(m) && m.outputPeak > 0, "dsp: meters while processing", m.outputPeak);
+
+    // Master off: untouched again, at once (same stream).
+    half.enabled = false;
+    player.setDsp(half);
+    pullFrames(1);  // one buffer may still be processed while the change lands
+    const int64_t at = player.positionFrames();
+    auto plain = pullFrames(2000);
+    check(plain.size() == 4000 && !memcmp(plain.data(), all.data() + at * 2, plain.size() * sizeof(float)), "dsp: off = bit-exact samples");
+    check(!player.dspMeters(m) && player.outputDescription().find("DSP") == std::string::npos, "dsp: off = no meters, no DSP on the output line");
+
+    // Seeking with it on: fresh state, the right samples (volume only, so exact).
+    half.enabled = true;
+    player.setDsp(half);
+    player.seek(30000);
+    auto sought = pullFrames(1000);
+    worst = 0;
+    for (size_t k = 0; k < sought.size(); k++) worst = std::max(worst, (double) std::fabs(sought[k] - all[30000 * 2 + k] * 0.5f));
+    check(sought.size() == 2000 && worst < 1e-5, "dsp: after a seek it processes the new position", worst);
+
+    // DSD with the DSP on opens as PCM, even where native / DoP would be allowed.
+    player.setDsdModes(true, true);
+    check(player.open(writeDsf(0.2), err) && !fake->format.bitExact && !player.info().dop && !player.info().nativeDsd && player.outputDescription().find("DSP on") != std::string::npos,
+          "dsp: DSD plays as PCM while the DSP is on " + err);
+    half.enabled = false;
+    player.setDsp(half);
+    check(player.open(writeDsf(0.2), err) && fake->format.bitExact, "dsp: off again = DSD bit-exact again");
+
+    // The full chain on music runs and stays finite while settings change under it (TSan: no races).
+    DspSettings full;
+    full.enabled = true;
+    full.params.companderOn = full.params.bassOn = full.params.impactOn = full.params.vocalOn = true;
+    player.setDsp(full);
+    check(player.open(asset("clip24.flac"), err), "dsp: full chain opens " + err);
+    player.play();
+    std::atomic<bool> stop{false};
+    std::thread tweak([&] {
+        DspSettings t = full;
+        for (int k = 0; !stop; k++) { t.params.airPercent = (float) (k % 100); player.setDsp(t); std::this_thread::sleep_for(std::chrono::microseconds(200)); }
+    });
+    auto busy = pullFrames(20000);
+    stop = true;
+    tweak.join();
+    bool finite = busy.size() == 40000;
+    for (float v : busy) finite &= std::isfinite(v) && std::fabs(v) < 4.0f;
+    check(finite, "dsp: full chain on music stays finite while settings change");
+    player.close();
+    player.setDsp(DspSettings{});
+}
+
 int main() {
     testLossless("clip16.flac", "FLAC", 16, kHash16);
     testLossless("clip24.flac", "FLAC", 24, kHash24);
@@ -556,6 +654,7 @@ int main() {
     testDop();
     testNativeDsd();
     testPlanar();
+    testDsp();
     std::printf(failures ? "%d desktop core test(s) FAILED\n" : "desktop core tests passed\n", failures);
     return failures ? 1 : 0;
 }

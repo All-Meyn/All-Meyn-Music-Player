@@ -49,6 +49,10 @@ object NativeEngine {
      * exclusive (bit-perfect) or shared, DSD as DoP. ASIO tries native DSD first.
      */
     @JvmStatic external fun playerSetOutput(deviceId: String, exclusive: Boolean, dop: Boolean)
+    /** The DSP chain: master switch, values and order as DspParams.toNativeValues / toNativeOrder. Applies at once. */
+    @JvmStatic external fun playerSetDsp(enabled: Boolean, values: FloatArray, order: IntArray)
+    /** The DSP meters (DspMeters layout) while the chain processes the song; null otherwise. */
+    @JvmStatic external fun playerDspMeters(): FloatArray?
     /** Opens a song paused at the start: null, or why it can't be played. Blocks briefly (file + device). */
     @JvmStatic external fun playerOpen(path: String): String?
     /** The song to play after the current one (gapless if same rate/channels): null, or why not. */
