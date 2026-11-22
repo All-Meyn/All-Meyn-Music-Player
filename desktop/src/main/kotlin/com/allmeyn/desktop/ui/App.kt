@@ -28,6 +28,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,9 +65,14 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
             delay(100)
         }
     }
-    fun go(root: Route) { query = ""; stack.clear(); stack.add(root) }
+    // Each screen in the stack keeps its scroll position etc. while covered (as on Android), so
+    // Back returns to exactly where you were; popped / left screens forget theirs.
+    val screenStates = rememberSaveableStateHolder()
+    fun screenKey(depth: Int, r: Route) = "$depth:$r"
+    fun forget(from: Int) { for (d in from until stack.size) screenStates.removeState(screenKey(d + 1, stack[d])) }
+    fun go(root: Route) { query = ""; forget(0); stack.clear(); stack.add(root) }
     fun push(r: Route) { query = ""; stack.add(r) }
-    fun back() { if (stack.size > 1) stack.removeAt(stack.lastIndex) }
+    fun back() { if (stack.size > 1) { forget(stack.lastIndex); stack.removeAt(stack.lastIndex) } }
     val chooseFolder: () -> Unit = { pickFolder()?.let { scope.launch { library.addFolder(it) } } }
 
     Column(Modifier.fillMaxSize()) {
@@ -105,14 +111,14 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 val view = library.view
                 val route = stack.last()
-                val needsMusic = route !is Route.Settings && route !is Route.Queue && route !is Route.Dsp
+                val needsMusic = route !is Route.Settings && route !is Route.Queue && route !is Route.Dsp && route !is Route.NowPlaying
                 when {
                     query.isNotBlank() -> SearchResults(
                         view.search.find(query), player,
                         onAlbum = { push(Route.AlbumPage(it.key)) }, onArtist = { push(Route.ArtistPage(it.name)) },
                     )
                     needsMusic && view.isEmpty -> if (library.loaded) EmptyLibrary(library, chooseFolder) else Box(Modifier.fillMaxSize())
-                    else -> when (route) {
+                    else -> screenStates.SaveableStateProvider(screenKey(stack.size, route)) { when (route) {
                         Route.Albums -> AlbumGrid(view.albums, "Albums", onOpen = { push(Route.AlbumPage(it.key)) })
                         is Route.AlbumPage -> view.albums.firstOrNull { it.key == route.key }
                             ?.let { AlbumPage(it, player, onBack = ::back) } ?: Missing(::back)
@@ -122,6 +128,7 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                         Route.Songs -> SongList(view.songs, player)
                         is Route.Folders -> FolderBrowser(view.folders, route.path, player, onOpen = { push(Route.Folders(it)) }, onBack = if (stack.size > 1) ::back else null)
                         Route.Queue -> QueueScreen(player)
+                        Route.NowPlaying -> NowPlayingScreen(player, onBack = { if (stack.size > 1) back() else go(Route.Albums) })
                         Route.Dsp -> DspScreen(dsp) { change ->
                             val old = dsp
                             val new = change(old).sanitized()
@@ -146,11 +153,18 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                             onRemoveFolder = { scope.launch { library.removeFolder(it) } },
                             onRescan = { scope.launch { library.rescan() } },
                         )
-                    }
+                    } }
                 }
             }
         }
-        PlayerBar(player, onOpenQueue = { go(Route.Queue) })
+        PlayerBar(
+            player, onOpenQueue = { go(Route.Queue) },
+            // The song in the bar opens it in full; again = back to where you were.
+            onOpenNowPlaying = {
+                if (query.isBlank() && stack.last() == Route.NowPlaying) back()
+                else if (player.current != null) { query = ""; if (stack.last() != Route.NowPlaying) stack.add(Route.NowPlaying) }
+            },
+        )
     }
 }
 
@@ -163,13 +177,16 @@ private fun Missing(onBack: () -> Unit) {
 
 /** Now playing, the transport controls and the seek bar. */
 @Composable
-fun PlayerBar(player: PlayerController, onOpenQueue: () -> Unit) {
+fun PlayerBar(player: PlayerController, onOpenQueue: () -> Unit, onOpenNowPlaying: () -> Unit) {
     val track = player.current
     Row(
         Modifier.fillMaxWidth().height(92.dp).background(MaterialTheme.colorScheme.surfaceContainer).padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(Modifier.width(300.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(
+            Modifier.width(300.dp).clip(RoundedCornerShape(8.dp)).clickable(enabled = track != null, onClick = onOpenNowPlaying).padding(4.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             Cover(track?.art.orEmpty(), 60.dp)
             Column {
                 Text(track?.title ?: "Nothing playing", fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
