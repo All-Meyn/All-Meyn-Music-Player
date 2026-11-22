@@ -103,7 +103,7 @@ fun SearchScreen(
             itemsIndexed(tracks, key = { _, t -> "t:" + t.uri }) { i, t ->
                 TrackRow(
                     t, playing = t.uri == playingUri,
-                    leading = { Artwork(t.art, Modifier.size(44.dp), corner = 4.dp) },
+                    leading = { Artwork(t.art, Modifier.size(44.dp), corner = 4.dp, size = 44.dp) },
                     subtitle = listOf(t.artist, t.album).filter { it.isNotBlank() }.joinToString(" · "),
                     player = player,
                 ) { keyboard?.hide(); player.playTracks(tracks, i) }
@@ -127,7 +127,7 @@ private fun ResultRow(art: String, round: Boolean, title: String, subtitle: Stri
         verticalAlignment = Alignment.CenterVertically,
     ) {
         // The same sizes as the Artists and Playlists lists.
-        Artwork(art, Modifier.size(52.dp), corner = if (round) 26.dp else 6.dp)
+        Artwork(art, Modifier.size(52.dp), corner = if (round) 26.dp else 6.dp, size = 52.dp)
         Column(Modifier.padding(start = 12.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(subtitle, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)

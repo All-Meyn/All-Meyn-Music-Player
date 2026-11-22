@@ -144,7 +144,9 @@ private fun AllMeynTheme(overlay: @Composable () -> Unit = {}, content: @Composa
     // dialogs and menus draw in this window too, so it wraps everything, the playlist dialog included.
     MaterialTheme(colorScheme = scheme) {
         Box(Modifier.fillMaxSize()) {
-            LiquidGlassTheme(dark = dark, background = scheme.surface) {
+            // renderScale 0.7: the glass records and refracts at 70 % resolution. The library measured
+            // this halving janky frames when scrolling (docs/performance.md); edges stay sharp.
+            LiquidGlassTheme(dark = dark, background = scheme.surface, renderScale = 0.7f) {
                 Surface(Modifier.fillMaxSize()) { content() }
             }
             overlay() // drawn after (above) the glass layer
@@ -451,7 +453,7 @@ private fun MiniPlayer(player: PlayerUi, modifier: Modifier = Modifier, onOpen: 
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Artwork(player.artPath, Modifier.size(44.dp), corner = 6.dp)
+                Artwork(player.artPath, Modifier.size(44.dp), corner = 6.dp, size = 44.dp)
                 Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
                     Text(player.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold)
                     Text(player.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)

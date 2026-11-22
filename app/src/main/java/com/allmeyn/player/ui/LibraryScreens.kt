@@ -91,7 +91,7 @@ fun DetailHeader(
         else -> 140.dp
     }
     Row(Modifier.fillMaxWidth().padding(horizontal = sidePadding, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-        Artwork(art, Modifier.size(size), corner = if (round) size / 2 else 8.dp)
+        Artwork(art, Modifier.size(size), corner = if (round) size / 2 else 8.dp, size = size)
         Column(Modifier.weight(1f).padding(start = 16.dp)) {
             Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, maxLines = 3, overflow = TextOverflow.Ellipsis)
             if (subtitle.isNotBlank()) Text(subtitle, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -134,7 +134,7 @@ fun AlbumsGrid(albums: List<Album>, header: (@Composable () -> Unit)? = null, on
         if (header != null) item(key = "header", span = { GridItemSpan(maxLineSpan) }) { header() }
         items(albums, key = { it.key }) { album ->
             Column(Modifier.clip(RoundedCornerShape(8.dp)).clickable { onOpen(album) }) {
-                Artwork(album.art, Modifier.fillMaxWidth().aspectRatio(1f))
+                Artwork(album.art, Modifier.fillMaxWidth().aspectRatio(1f), size = 200.dp)
                 Text(album.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
                 Text(album.artist, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
             }
@@ -179,7 +179,7 @@ fun ArtistsList(artists: List<Artist>, onOpen: (Artist) -> Unit) {
                 Modifier.fillMaxWidth().clickable { onOpen(a) }.padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Artwork(a.albums.firstOrNull { it.art.isNotEmpty() }?.art.orEmpty(), Modifier.size(52.dp), corner = 26.dp)
+                Artwork(a.albums.firstOrNull { it.art.isNotEmpty() }?.art.orEmpty(), Modifier.size(52.dp), corner = 26.dp, size = 52.dp)
                 Column(Modifier.padding(start = 12.dp)) {
                     Text(a.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text("${countOf(a.albums.size, "album")} · ${countOf(a.trackCount, "song")}", style = MaterialTheme.typography.bodySmall)
@@ -216,7 +216,7 @@ fun TracksList(tracks: List<Track>, playingUri: String, player: PlayerUi) {
         itemsIndexed(sorted, key = { _, t -> t.uri }) { i, t ->
             TrackRow(
                 t, playing = t.uri == playingUri,
-                leading = { Artwork(t.art, Modifier.size(44.dp), corner = 4.dp) },
+                leading = { Artwork(t.art, Modifier.size(44.dp), corner = 4.dp, size = 44.dp) },
                 subtitle = listOf(t.artist, t.album).filter { it.isNotBlank() }.joinToString(" · "),
                 player = player,
             ) { player.playTracks(sorted, i) }

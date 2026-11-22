@@ -1,8 +1,11 @@
 package com.allmeyn.player.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,6 +13,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -63,6 +68,22 @@ val LocalBottomBarPadding = compositionLocalOf { 0.dp }
 fun belowBars(start: Dp = 0.dp, top: Dp = 0.dp, end: Dp = 0.dp, bottom: Dp = 0.dp, fullWidth: Boolean = false): PaddingValues {
     val side = if (fullWidth) 0.dp else sideInset()
     return PaddingValues(start + side, top, end + side, bottom + LocalBottomBarPadding.current)
+}
+
+/**
+ * A card for panels inside scrolling screens (Settings, DSP). Deliberately not glass: every glass
+ * element re-records the screen behind it each frame, and a scrolling list of glass cards is the
+ * most expensive case (docs/performance.md). Translucent, so the blurred cover still shows.
+ */
+@Composable
+fun PanelCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        modifier,
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.72f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)),
+        content = content,
+    )
 }
 
 /** The logo's copper, for the brand mark. */

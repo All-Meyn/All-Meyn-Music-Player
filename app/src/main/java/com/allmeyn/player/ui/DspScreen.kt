@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import com.wexpa.liquidglass.material3.Card
 import androidx.compose.material3.MaterialTheme
 import com.wexpa.liquidglass.material3.OutlinedButton
 import com.wexpa.liquidglass.material3.Slider
@@ -64,7 +63,7 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
 
     LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = belowBars(16.dp, 16.dp, 16.dp, 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item(key = "master") {
-            Card(Modifier.fillMaxWidth()) {
+            PanelCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     SwitchRow("DSP", p.enabled, { v -> onChange { it.copy(enabled = v) } })
                     Text(
@@ -79,7 +78,7 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
             Text("Chain (drag to reorder)", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
         }
         itemsIndexed(reorder.rows, key = { _, proc -> proc.name }) { i, proc ->
-            Card(reorderRow(reorder, proc).fillMaxWidth()) {
+            PanelCard(reorderRow(reorder, proc).fillMaxWidth()) {
                 Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("${i + 1}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(24.dp))
                     Text(proc.label, Modifier.weight(1f), fontWeight = FontWeight.Medium)
@@ -151,7 +150,7 @@ private fun signed(v: Float) = if (v > 0f) "+%.1f".format(v).removeSuffix(".0") 
 
 @Composable
 private fun Section(title: String, on: Boolean, content: @Composable () -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
+    PanelCard(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
