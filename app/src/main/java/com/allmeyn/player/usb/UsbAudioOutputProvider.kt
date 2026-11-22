@@ -16,6 +16,7 @@ import androidx.media3.exoplayer.audio.AudioOutputProvider.FormatSupport
 import androidx.media3.exoplayer.audio.AudioOutputProvider.OutputConfig
 import androidx.media3.exoplayer.audio.AudioTrackAudioOutputProvider
 import androidx.media3.exoplayer.audio.ForwardingAudioOutput
+import com.allmeyn.player.decode.DecodeRegistry
 import java.nio.ByteBuffer
 import java.util.concurrent.CopyOnWriteArrayList
 
@@ -85,7 +86,12 @@ class UsbAudioOutputProvider(
             val r = driver.configureStream(config.encoding, config.sampleRate, channels)
             if (r.token != null) {
                 driver.mediaRoute = "USB driver · ${config.sampleRate} Hz"
-                return UsbAudioOutput(driver, r.token, config.sampleRate, config.audioSessionId)
+                val dsdRamp = if (DecodeRegistry.isNativeDsd(config.encoding, channels, config.sampleRate)) {
+                    UsbAudioOutput.dsdRampBytes(config.sampleRate, Util.getPcmFrameSize(config.encoding, channels))
+                } else {
+                    0L
+                }
+                return UsbAudioOutput(driver, r.token, config.sampleRate, config.audioSessionId, dsdRamp)
             }
             // e.g. the DAC refused this sample rate: play through Android instead of failing.
             Log.w(TAG, "USB driver can't take ${config.sampleRate} Hz: ${r.error}; using AudioTrack")
