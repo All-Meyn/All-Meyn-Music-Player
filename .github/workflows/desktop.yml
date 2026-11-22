@@ -96,7 +96,7 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
 
       - name: Unit tests (incl. loading the real engine DLL) and the installer
-        run: ./gradlew --no-daemon -p desktop test packageMsi
+        run: ./gradlew --no-daemon -p desktop test createDistributable packageMsi
 
       - name: Check the engine DLL tests ran (not skipped)
         run: |
