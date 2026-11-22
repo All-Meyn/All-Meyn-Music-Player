@@ -6,11 +6,14 @@ installer as the `all-meyn-player-windows` artifact.
 
 Build locally (Linux, cross-compiling the engine; needs `g++-mingw-w64-x86-64-posix`, CMake, a JDK):
 
-    scripts/build-ffmpeg-windows.sh
+    scripts/build-ffmpeg-desktop.sh windows
     cmake -S desktop/native -B build/desktop-native -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_TOOLCHAIN_FILE=$PWD/desktop/native/cmake/mingw-w64.cmake -DJDK_INCLUDE=$JAVA_HOME/include
     cmake --build build/desktop-native
     cp build/desktop-native/allmeyn_desktop.dll desktop/resources/windows-x64/
+
+Core tests on Linux: `scripts/build-ffmpeg-desktop.sh linux`, then
+`cmake -S desktop/native -B build/desktop-tests -DALLMEYN_HOST_TESTS=ON && cmake --build build/desktop-tests && build/desktop-tests/desktop_core_test`.
 
 Then on Windows: `gradlew -p desktop run` (or `test`, `packageMsi`).
 

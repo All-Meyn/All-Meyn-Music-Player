@@ -19,6 +19,7 @@ object Formats {
         val decoders = components.filter { it.startsWith("decoder:") }.map { it.removePrefix("decoder:") }.toSet()
         val out = DECODER_NAMES.filterKeys { it in decoders }.values.distinct().toMutableList()
         if (decoders.any { it.startsWith("pcm_") }) out += "WAV / AIFF"
+        if ("allmeyn_dsd" in decoders) out += "DSD (DSF/DFF)"  // our own decoder (the Android app's dsd.c)
         return out
     }
 }
