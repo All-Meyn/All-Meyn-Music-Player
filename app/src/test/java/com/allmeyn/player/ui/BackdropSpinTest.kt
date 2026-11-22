@@ -5,11 +5,17 @@ import org.junit.Test
 
 class BackdropSpinTest {
     @Test
-    fun turnsClockwiseOnceAMinuteAndWrapsSmoothly() {
-        assertEquals(0f, backdropSpinDegrees(0), 0f)
-        assertEquals(90f, backdropSpinDegrees(BACKDROP_SPIN_PERIOD_MS / 4), 1e-3f)
-        assertEquals(359.994f, backdropSpinDegrees(BACKDROP_SPIN_PERIOD_MS - 1), 1e-3f)
-        assertEquals(0f, backdropSpinDegrees(BACKDROP_SPIN_PERIOD_MS), 0f) // a full turn = back at 0
-        assertEquals(6f, backdropSpinDegrees(3 * BACKDROP_SPIN_PERIOD_MS + 1_000), 1e-3f) // 6°/s
+    fun turnsClockwiseOnceAMinute() {
+        assertEquals(6f, advanceBackdropSpin(0f, 1_000), 1e-3f) // 6 degrees a second
+        assertEquals(90f, advanceBackdropSpin(0f, BACKDROP_SPIN_PERIOD_MS / 4), 1e-3f)
+    }
+
+    @Test
+    fun resumesFromWhereItStoppedAndWraps() {
+        // Paused at 120 degrees: a later step continues from there, not from 0.
+        assertEquals(126f, advanceBackdropSpin(120f, 1_000), 1e-3f)
+        assertEquals(3f, advanceBackdropSpin(357f, 1_000), 1e-3f) // past a full turn: wraps to 0..360
+        assertEquals(120f, advanceBackdropSpin(120f, 0), 0f)
+        assertEquals(120f, advanceBackdropSpin(120f, -5), 0f) // a clock glitch never turns it back
     }
 }

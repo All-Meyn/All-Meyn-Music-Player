@@ -99,7 +99,7 @@ private fun decodeAtLeast(path: String, px: Int): Bitmap? {
  * [strength] 0–100 (Settings → Appearance): how much of the cover shows through the scrim; 0 = none.
  */
 @Composable
-fun ArtBackdrop(path: String, strength: Int, modifier: Modifier = Modifier) {
+fun ArtBackdrop(path: String, strength: Int, playing: Boolean, modifier: Modifier = Modifier) {
     val blurred by produceState(initialValue = path.takeIf { it.isNotEmpty() }?.let { BackdropMemory.cache.get(it) }, path) {
         if (path.isEmpty()) { value = null; return@produceState }
         value = BackdropMemory.cache.get(path) ?: withContext(Dispatchers.IO) {
@@ -108,7 +108,7 @@ fun ArtBackdrop(path: String, strength: Int, modifier: Modifier = Modifier) {
     }
     if (strength <= 0) return
     val scrim = MaterialTheme.colorScheme.surface.copy(alpha = 1f - strength.coerceAtMost(100) / 100f)
-    val spin = rememberBackdropSpin()
+    val spin = rememberBackdropSpin(playing)
     Crossfade(targetState = blurred, animationSpec = tween(600), modifier = modifier.fillMaxSize(), label = "backdrop") { b ->
         if (b != null) {
             Box(Modifier.fillMaxSize()) {
@@ -129,28 +129,32 @@ fun ArtBackdrop(path: String, strength: Int, modifier: Modifier = Modifier) {
 /** One clockwise turn of the background takes this long. */
 const val BACKDROP_SPIN_PERIOD_MS = 60_000L
 
-/** The background's angle (degrees, clockwise) [elapsedMs] after it started turning. */
-fun backdropSpinDegrees(elapsedMs: Long): Float =
-    (elapsedMs.mod(BACKDROP_SPIN_PERIOD_MS)).toFloat() * 360f / BACKDROP_SPIN_PERIOD_MS
+/** The background's angle (degrees, clockwise, 0..360) after turning [elapsedMs] more from [degrees]. */
+fun advanceBackdropSpin(degrees: Float, elapsedMs: Long): Float =
+    ((degrees + elapsedMs.coerceAtLeast(0) * 360f / BACKDROP_SPIN_PERIOD_MS) % 360f)
 
 /**
- * The slowly turning angle. Updated about 30 times a second, not at the display's rate: on a blur
- * this soft the steps can't be seen, and every update makes the glass record the screen again
- * (the library's advice is to quantise slow animations). Driven by frames, so it stops while the
- * app isn't visible; stays still when Android's "Remove animations" is on.
+ * The slowly turning angle: it turns only while music [playing], and holds where it is when
+ * playback pauses or stops (resuming carries on from there). Updated about 30 times a second, not
+ * at the display's rate: on a blur this soft the steps can't be seen, and every update makes the
+ * glass record the screen again (the library's advice is to quantise slow animations). Driven by
+ * frames, so it also stops while the app isn't visible; stays still with "Remove animations".
  */
 @Composable
-private fun rememberBackdropSpin(): MutableFloatState {
+private fun rememberBackdropSpin(playing: Boolean): MutableFloatState {
     val context = LocalContext.current
     val angle = remember { mutableFloatStateOf(0f) }
     val animate = remember {
         Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
     }
-    if (animate) {
+    if (animate && playing) {
         LaunchedEffect(Unit) {
-            val start = withFrameMillis { it }
+            var last = withFrameMillis { it }
             while (true) {
-                withFrameMillis { now -> angle.floatValue = backdropSpinDegrees(now - start) }
+                withFrameMillis { now ->
+                    angle.floatValue = advanceBackdropSpin(angle.floatValue, now - last)
+                    last = now
+                }
                 delay(33)
             }
         }

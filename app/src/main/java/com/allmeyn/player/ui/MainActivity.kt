@@ -232,7 +232,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     val sourceLabel = decoderLabel ?: pluginFormat.takeIf { it != "—" }.orEmpty()
     val route = driverStatus.lineSequence().firstOrNull { it.startsWith("Player output:") }?.substringAfter(": ").orEmpty()
 
-    ArtBackdrop(player.artPath, backdropStrength)
+    ArtBackdrop(player.artPath, backdropStrength, playing = player.isPlaying)
 
     if (choosingFolder) {
         ChooseFolderSheet(
