@@ -16,3 +16,9 @@
 # FFmpeg build output (scripts/build-ffmpeg.sh)
 /app/src/main/cpp/ffmpeg/
 /build/
+
+# Desktop (Windows) build output: FFmpeg (scripts/build-ffmpeg-windows.sh), the engine DLL (built
+# in CI into the app's resources), Gradle output
+/desktop/build/
+/desktop/native/ffmpeg/
+/desktop/resources/windows-x64/allmeyn_desktop.dll
