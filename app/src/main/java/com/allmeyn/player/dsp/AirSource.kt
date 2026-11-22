@@ -1,7 +1,9 @@
 package com.allmeyn.player.dsp
 
+import androidx.annotation.OptIn
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.UnstableApi
 
 /**
  * What the file says about the song being decoded, for Air: lossy or not, and for lossy codecs a
@@ -31,6 +33,7 @@ object AirSource {
         MimeTypes.AUDIO_DTS, MimeTypes.AUDIO_AMR_NB, MimeTypes.AUDIO_AMR_WB,
     )
 
+    @OptIn(UnstableApi::class)
     private fun bitrateOf(f: Format): Int = when {
         f.averageBitrate != Format.NO_VALUE -> f.averageBitrate
         else -> f.bitrate
