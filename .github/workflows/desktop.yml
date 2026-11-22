@@ -105,6 +105,19 @@ jobs:
           grep -q 'skipped="0"' "$xml" || { echo "NativeEngineTest was skipped: the DLL wasn't loaded"; exit 1; }
           grep -o 'Outputs:[^<]*' "$xml" || true
 
+      # The packaged app (bundled Java runtime + DLL) must start and keep running: catches a runtime
+      # module or resource missing from the distribution, which unit tests can't see.
+      - name: Start the packaged app
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem "desktop/build/compose/binaries/main/app" -Recurse -Filter "All-Meyn Player.exe" | Select-Object -First 1
+          if (-not $exe) { throw "packaged app not found" }
+          $p = Start-Process -FilePath $exe.FullName -PassThru
+          Start-Sleep -Seconds 20
+          if ($p.HasExited) { throw "the app exited after start (exit code $($p.ExitCode))" }
+          Write-Host "App still running after 20 s (pid $($p.Id))"
+          Stop-Process -Id $p.Id -Force
+
       - uses: actions/upload-artifact@v6
         if: always()
         with:
