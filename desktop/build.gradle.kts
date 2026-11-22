@@ -14,6 +14,14 @@ dependencies {
     testImplementation(kotlin("test"))
 }
 
+// The library model (Track, Album, Artist, folders, sorting, search) is the Android app's own pure
+// Kotlin file, compiled here as well: both apps group, sort and search the library the same way.
+val sharedSources = tasks.register<Sync>("sharedSources") {
+    from("../app/src/main/java") { include("com/allmeyn/player/library/Models.kt") }
+    into(layout.buildDirectory.dir("shared-src"))
+}
+kotlin.sourceSets.main { kotlin.srcDir(sharedSources) }
+
 // The AM mark comes straight from the Android app's vector (one source of truth for the logo).
 // The window/taskbar icon is the Play Store artwork.
 tasks.processResources {

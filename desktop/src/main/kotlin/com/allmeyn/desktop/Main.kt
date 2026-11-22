@@ -15,15 +15,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import com.allmeyn.desktop.engine.NativeEngine
+import com.allmeyn.desktop.library.DesktopLibrary
 import com.allmeyn.desktop.ui.AllMeynTheme
-import com.allmeyn.desktop.engine.TrackInfo
-import com.allmeyn.desktop.ui.HomeScreen
+import com.allmeyn.desktop.ui.App
 import com.allmeyn.desktop.ui.PlayerController
 import com.allmeyn.desktop.ui.StartupOverlay
-import java.awt.FileDialog
-import java.io.File
-import java.util.prefs.Preferences
-import kotlinx.coroutines.launch
 
 /** The app icon for the window and taskbar (the same artwork as the Play Store icon). */
 private val appIcon: ImageBitmap? by lazy {
@@ -31,11 +28,10 @@ private val appIcon: ImageBitmap? by lazy {
         ?.use { org.jetbrains.skia.Image.makeFromEncoded(it.readBytes()).toComposeImageBitmap() }
 }
 
-/** Where the open dialog starts: the folder of the last song opened. */
-private val prefs: Preferences = Preferences.userRoot().node("com/allmeyn/desktop")
-
 fun main() = application {
-    val player = remember { PlayerController() }
+    val library = remember { DesktopLibrary() }
+    val appScope = rememberCoroutineScope()
+    val player = remember { PlayerController(appScope) }
     Window(
         onCloseRequest = {
             player.close()
@@ -43,26 +39,16 @@ fun main() = application {
         },
         title = "All-Meyn Player",
         icon = appIcon?.let { BitmapPainter(it) },
-        state = rememberWindowState(size = DpSize(1100.dp, 720.dp)),
+        state = rememberWindowState(size = DpSize(1240.dp, 800.dp)),
     ) {
-        val scope = rememberCoroutineScope()
-        val openSong: () -> Unit = {
-            // The native Windows open dialog (AWT FileDialog), filtered to music files.
-            val dialog = FileDialog(window, "Open a song", FileDialog.LOAD).apply {
-                prefs.get("lastFolder", null)?.let { directory = it }
-                file = TrackInfo.EXTENSIONS.joinToString(";") { "*.$it" }
-                isVisible = true
-            }
-            val name = dialog.file
-            val dir = dialog.directory
-            if (name != null && dir != null) {
-                prefs.put("lastFolder", dir)
-                scope.launch { player.open(File(dir, name)) }
-            }
+        window.minimumSize = java.awt.Dimension(960, 600)
+        // The Windows folder picker, over this window.
+        val pickFolder: () -> String? = {
+            if (NativeEngine.isReady) NativeEngine.pickFolder(window.windowHandle, "Choose your music folder") else null
         }
         AllMeynTheme {
             Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                HomeScreen(player, openSong)
+                App(library, player, pickFolder)
                 StartupOverlay()
             }
         }

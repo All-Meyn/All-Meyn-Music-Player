@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "../platform/file_open.h"
+#include "codec_names.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -31,24 +32,6 @@ std::string tag(AVDictionary* a, AVDictionary* b, const char* key) {
         if (const AVDictionaryEntry* e = av_dict_get(d, key, nullptr, 0); e && e->value && *e->value) return e->value;
     }
     return {};
-}
-
-std::string codecName(AVCodecID id) {
-    switch (id) {
-        case AV_CODEC_ID_FLAC: return "FLAC";
-        case AV_CODEC_ID_ALAC: return "ALAC";
-        case AV_CODEC_ID_APE: return "APE";
-        case AV_CODEC_ID_WAVPACK: return "WavPack";
-        case AV_CODEC_ID_MP3: return "MP3";
-        case AV_CODEC_ID_AAC: return "AAC";
-        case AV_CODEC_ID_VORBIS: return "Ogg Vorbis";
-        case AV_CODEC_ID_OPUS: return "Opus";
-        default: {
-            const char* n = avcodec_get_name(id);
-            if (n && !strncmp(n, "pcm_", 4)) return "PCM";
-            return n ? n : "audio";
-        }
-    }
 }
 
 // ---- FFmpeg ----------------------------------------------------------------------------------
@@ -93,7 +76,7 @@ public:
                               : (av_get_bytes_per_sample(codec_->sample_fmt) > 0 && !av_sample_fmt_is_planar(codec_->sample_fmt) &&
                                  codec_->sample_fmt != AV_SAMPLE_FMT_FLT && codec_->sample_fmt != AV_SAMPLE_FMT_FLTP
                                      ? av_get_bytes_per_sample(codec_->sample_fmt) * 8 : 0);
-        if (isLossy(codec_->codec_id)) info_.bitsPerSample = 0;
+        if (isLossyCodec(codec_->codec_id)) info_.bitsPerSample = 0;
         if (st->duration != AV_NOPTS_VALUE && st->duration > 0) {
             info_.totalFrames = av_rescale_q(st->duration, timeBase_, AVRational{1, info_.sampleRate});
         } else if (format_->duration > 0) {
@@ -141,10 +124,6 @@ public:
     }
 
 private:
-    static bool isLossy(AVCodecID id) {
-        return id == AV_CODEC_ID_MP3 || id == AV_CODEC_ID_AAC || id == AV_CODEC_ID_VORBIS || id == AV_CODEC_ID_OPUS;
-    }
-
     /** Decodes the next frame into pending_. Frames decoded, 0 at the end, <0 on error. */
     int decodeNext() {
         for (;;) {
@@ -253,10 +232,13 @@ std::unique_ptr<Source> openSource(const std::string& path, std::string& error) 
             error = "Unsupported DSD layout";
             return nullptr;
         }
-        return std::make_unique<DsdSource>(d);
+        auto s = std::make_unique<DsdSource>(d);
+        s->setPath(path);
+        return s;
     }
     auto s = std::make_unique<FfmpegSource>();
     if (!s->open(path, error)) return nullptr;
+    s->setPath(path);
     return s;
 }
 

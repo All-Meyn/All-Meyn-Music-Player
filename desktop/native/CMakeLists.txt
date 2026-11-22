@@ -31,6 +31,7 @@ endif()
 add_library(allmeyn_core STATIC
     core/source.cpp
     core/player.cpp
+    core/tags.cpp
     platform/file_open.cpp
     "${SHARED_CPP}/decoder/dsd.c"
 )
@@ -40,7 +41,7 @@ target_include_directories(allmeyn_core PUBLIC
     "${SHARED_CPP}/decoder"
 )
 target_compile_definitions(allmeyn_core PRIVATE _FILE_OFFSET_BITS=64)
-set_source_files_properties(core/source.cpp core/player.cpp platform/file_open.cpp
+set_source_files_properties(core/source.cpp core/player.cpp core/tags.cpp platform/file_open.cpp
     PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra;-Werror")
 if(WIN32)
     # dsd.c reads with pread(); Windows gets ours, so the shared file stays untouched.
@@ -67,6 +68,7 @@ if(WIN32)
     add_library(allmeyn_desktop SHARED
         engine_jni.cpp
         audio_devices.cpp
+        folder_picker.cpp
         wasapi_output.cpp
     )
     target_include_directories(allmeyn_desktop PRIVATE
@@ -74,7 +76,7 @@ if(WIN32)
         "${CMAKE_CURRENT_SOURCE_DIR}/jni/win32"   # Windows jni_md.h (the host JDK's is for Linux)
     )
     target_compile_options(allmeyn_desktop PRIVATE -Wall -Wextra -Werror -O2)
-    target_link_libraries(allmeyn_desktop PRIVATE allmeyn_core ole32 uuid avrt ksuser)
+    target_link_libraries(allmeyn_desktop PRIVATE allmeyn_core ole32 uuid avrt ksuser shell32)
     # No lib prefix (System.load), no MinGW runtime DLLs, JNI symbols exported undecorated.
     set_target_properties(allmeyn_desktop PROPERTIES PREFIX "")
     target_link_options(allmeyn_desktop PRIVATE -static -static-libgcc -static-libstdc++ -Wl,--kill-at -s)

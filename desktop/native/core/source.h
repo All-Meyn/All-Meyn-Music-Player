@@ -15,6 +15,7 @@ struct SourceInfo {
     int64_t totalFrames = 0;  // 0 if unknown
     std::string codec;        // "FLAC", "DSD64 (DSF)", ...
     std::string title, artist, album;
+    std::string path;         // the file (UTF-8)
 };
 
 class Source {
@@ -25,6 +26,8 @@ public:
     virtual int read(float* out, int maxFrames) = 0;
     /** The next read starts exactly at [frame]. False on error. */
     virtual bool seek(int64_t frame) = 0;
+
+    void setPath(const std::string& p) { info_.path = p; }
 
 protected:
     SourceInfo info_;

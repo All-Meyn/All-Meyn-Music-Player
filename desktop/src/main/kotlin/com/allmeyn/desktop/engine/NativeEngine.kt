@@ -42,7 +42,12 @@ object NativeEngine {
     // ---- player (only call when isReady) ----
     /** Opens a song paused at the start: null, or why it can't be played. Blocks briefly (file + device). */
     @JvmStatic external fun playerOpen(path: String): String?
-    /** [codec, sampleRate, channels, bits, totalFrames, title, artist, album, output]. */
+    /** The song to play after the current one (gapless if same rate/channels): null, or why not. */
+    @JvmStatic external fun playerSetNext(path: String): String?
+    @JvmStatic external fun playerClearNext()
+    /** Counts gapless moves to the next song. */
+    @JvmStatic external fun playerTrackSerial(): Int
+    /** [codec, sampleRate, channels, bits, totalFrames, title, artist, album, output, path] of the song heard. */
     @JvmStatic external fun playerInfo(): Array<String>
     @JvmStatic external fun playerPlay()
     @JvmStatic external fun playerPause()
@@ -52,4 +57,15 @@ object NativeEngine {
     /** 0 idle, 1 playing, 2 paused, 3 ended, 4 error. */
     @JvmStatic external fun playerState(): Int
     @JvmStatic external fun playerError(): String
+
+    // ---- library ----
+    /**
+     * [ok, title, artist, album, albumArtist, track, disc, year, durationMs, format, sampleRate, bits,
+     * hasCover, error]. Thread-safe (the scan reads several files at once).
+     */
+    @JvmStatic external fun readTags(path: String): Array<String>
+    /** The embedded cover's bytes, or null. */
+    @JvmStatic external fun readCover(path: String): ByteArray?
+    /** The Windows folder picker over the window [owner] (HWND); the folder, or null if cancelled. */
+    @JvmStatic external fun pickFolder(owner: Long, title: String): String?
 }

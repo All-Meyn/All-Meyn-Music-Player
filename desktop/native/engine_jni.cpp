@@ -9,6 +9,8 @@
 
 #include "audio_devices.h"
 #include "core/player.h"
+#include "core/tags.h"
+#include "folder_picker.h"
 #include "wasapi_output.h"
 
 extern "C" {
@@ -91,13 +93,31 @@ JNIEXPORT jstring JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerOpe
     return toJava(env, error.empty() ? std::string("Can't play this file") : error);
 }
 
-/** [codec, sampleRate, channels, bits, totalFrames, title, artist, album, output]. */
+/** Queues the song after the current one (gapless if same rate/channels). Null, or why it can't play. */
+JNIEXPORT jstring JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetNext(JNIEnv* env, jclass, jstring path) {
+    // Opening the file happens outside the lock: the player guards its next song itself.
+    std::string error;
+    if (player().setNext(fromJava(env, path), error)) return nullptr;
+    return toJava(env, error.empty() ? std::string("Can't play this file") : error);
+}
+
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerClearNext(JNIEnv*, jclass) {
+    player().clearNext();
+}
+
+/** Counts gapless moves to the next song. */
+JNIEXPORT jint JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerTrackSerial(JNIEnv*, jclass) {
+    std::lock_guard<std::mutex> g(g_lock);
+    return player().trackSerial();
+}
+
+/** [codec, sampleRate, channels, bits, totalFrames, title, artist, album, output, path] of the song heard. */
 JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerInfo(JNIEnv* env, jclass) {
     std::lock_guard<std::mutex> g(g_lock);
     const auto i = player().info();
     return toJava(env, std::vector<std::string>{
         i.codec, std::to_string(i.sampleRate), std::to_string(i.channels), std::to_string(i.bitsPerSample),
-        std::to_string(i.totalFrames), i.title, i.artist, i.album, player().outputDescription()});
+        std::to_string(i.totalFrames), i.title, i.artist, i.album, player().outputDescription(), i.path});
 }
 
 JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerPlay(JNIEnv*, jclass) {
@@ -135,6 +155,35 @@ JNIEXPORT jint JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerState(
 JNIEXPORT jstring JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerError(JNIEnv* env, jclass) {
     std::lock_guard<std::mutex> g(g_lock);
     return toJava(env, player().error());
+}
+
+// ---- library ---------------------------------------------------------------------------------
+
+/**
+ * [ok(1/0), title, artist, album, albumArtist, track, disc, year, durationMs, format, sampleRate,
+ * bits, hasCover(1/0), error]. Safe to call from several threads (no shared state).
+ */
+JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_readTags(JNIEnv* env, jclass, jstring path) {
+    const auto t = allmeyn::readTags(fromJava(env, path));
+    return toJava(env, std::vector<std::string>{
+        t.ok ? "1" : "0", t.title, t.artist, t.album, t.albumArtist, std::to_string(t.track), std::to_string(t.disc),
+        std::to_string(t.year), std::to_string(t.durationMs), t.format, std::to_string(t.sampleRate), std::to_string(t.bits),
+        t.hasCover ? "1" : "0", t.error});
+}
+
+/** The embedded cover's bytes, or null. */
+JNIEXPORT jbyteArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_readCover(JNIEnv* env, jclass, jstring path) {
+    const auto bytes = allmeyn::readCover(fromJava(env, path));
+    if (bytes.empty()) return nullptr;
+    jbyteArray out = env->NewByteArray((jsize) bytes.size());
+    env->SetByteArrayRegion(out, 0, (jsize) bytes.size(), reinterpret_cast<const jbyte*>(bytes.data()));
+    return out;
+}
+
+/** The Windows folder picker over [owner] (HWND). The folder, or null if cancelled. */
+JNIEXPORT jstring JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_pickFolder(JNIEnv* env, jclass, jlong owner, jstring title) {
+    const std::string path = allmeyn::pickFolder(reinterpret_cast<void*>(owner), fromJava(env, title));
+    return path.empty() ? nullptr : toJava(env, path);
 }
 
 }  // extern "C"
