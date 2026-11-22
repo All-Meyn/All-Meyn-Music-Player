@@ -1,0 +1,9 @@
+Steinberg ASIO SDK 2.3 — interface headers only (asio.h, asiosys.h, iasiodrv.h) and LICENSE.txt,
+copied unmodified from the official SDK (mirror: github.com/jcelerier/asio-2, commit
+1bc070d1c7b8f0bf92f9d3b7c72e5880a7dcffdb, Feb 2026).
+
+The SDK is dual-licensed (Steinberg ASIO License or GPL version 3). All-Meyn Player uses it under
+the GPL version 3 option, matching the app's own license (GPLv3, via the Tetra-Expand DSP port).
+The host code that loads drivers is our own (desktop/native/asio_output.cpp, asio_drivers.cpp).
+
+ASIO is a trademark and software of Steinberg Media Technologies GmbH.

@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 
+#include "asio_output.h"
 #include "audio_devices.h"
 #include "core/player.h"
 #include "core/tags.h"
@@ -32,12 +33,15 @@ std::string fromJava(JNIEnv* env, jstring s) {
 
 // One player for the app; JNI calls may come from different JVM threads, so they're serialised.
 std::mutex g_lock;
-// The output songs are opened on (Settings): device and mode.
+// The output songs are opened on (Settings): device and mode, or an ASIO driver ("asio:<name>").
 std::mutex g_outputLock;
 allmeyn::WasapiConfig g_output;
+const std::string kAsioPrefix = "asio:";
+bool isAsio(const std::string& id) { return id.compare(0, kAsioPrefix.size(), kAsioPrefix) == 0; }
 allmeyn::Player& player() {
-    static allmeyn::Player p([] {
+    static allmeyn::Player p([]() -> std::unique_ptr<allmeyn::Output> {
         std::lock_guard<std::mutex> g(g_outputLock);
+        if (isAsio(g_output.deviceId)) return std::make_unique<allmeyn::AsioOutput>(g_output.deviceId.substr(kAsioPrefix.size()));
         return std::make_unique<allmeyn::WasapiOutput>(g_output);
     });
     return p;
@@ -91,17 +95,25 @@ JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_outp
 
 // ---- player ---------------------------------------------------------------------------------
 
+/** Installed ASIO drivers, by name (open one with playerSetOutput("asio:" + name, ...)). */
+JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_asioDrivers(JNIEnv* env, jclass) {
+    return toJava(env, allmeyn::listAsioDrivers());
+}
+
 /**
- * The output for songs opened from now on: [deviceId] (empty = Windows' default), exclusive
- * (bit-perfect) or shared, and DSD as DoP when the output can take it bit-exact.
+ * The output for songs opened from now on: [deviceId] (empty = Windows' default; "asio:<name>" =
+ * that ASIO driver), exclusive (bit-perfect) or shared for WASAPI, and DSD as DoP when the output
+ * can take it bit-exact. ASIO also tries native DSD first (falling back to DoP, then PCM).
  */
 JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetOutput(JNIEnv* env, jclass, jstring deviceId, jboolean exclusive, jboolean dop) {
+    bool asio;
     {
         std::lock_guard<std::mutex> g(g_outputLock);
         g_output.deviceId = fromJava(env, deviceId);
         g_output.exclusive = exclusive == JNI_TRUE;
+        asio = isAsio(g_output.deviceId);
     }
-    player().setDopAllowed(dop == JNI_TRUE && exclusive == JNI_TRUE);
+    player().setDsdModes(dop == JNI_TRUE && (asio || exclusive == JNI_TRUE), /*native=*/asio);
 }
 
 /** Opens a song (paused at the start). Returns null, or why it can't be played. */

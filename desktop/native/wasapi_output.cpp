@@ -114,6 +114,10 @@ WasapiOutput::~WasapiOutput() {
 }
 
 bool WasapiOutput::open(const StreamFormat& format, PullFn pull, std::string& error) {
+    if (format.nativeDsd) {
+        error = "Native DSD needs an ASIO output";
+        return false;
+    }
     format_ = format;
     pull_ = std::move(pull);
     auto result = std::make_shared<OpenResult>();

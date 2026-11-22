@@ -17,7 +17,14 @@ struct SourceInfo {
     std::string title, artist, album;
     std::string path;         // the file (UTF-8)
     bool dop = false;         // DSD packed as DoP in 24-bit frames: must reach the DAC bit-exact
+    // Native DSD: each frame is one 32-bit word of raw DSD per channel (4 bytes, oldest first, MSB =
+    // oldest bit), carried in the float slots as raw bits (only copied, never computed on).
+    bool nativeDsd = false;
+    int dsdRate = 0;          // DSD bit rate (2822400 for DSD64) when nativeDsd
 };
+
+/** How a DSF/DFF reaches the output. */
+enum class DsdMode { Pcm, Dop, Native };
 
 class Source {
 public:
@@ -34,8 +41,8 @@ protected:
     SourceInfo info_;
 };
 
-/** Opens [utf8Path]: DSF/DFF with our DSD decoder (as DoP if [dop], else PCM), everything else with FFmpeg. */
-std::unique_ptr<Source> openSource(const std::string& utf8Path, std::string& error, bool dop = false);
+/** Opens [utf8Path]: DSF/DFF with our DSD decoder in [dsd] mode, everything else with FFmpeg. */
+std::unique_ptr<Source> openSource(const std::string& utf8Path, std::string& error, DsdMode dsd = DsdMode::Pcm);
 
 /** DSF/DFF (by its first bytes). */
 bool isDsdFile(const std::string& utf8Path);

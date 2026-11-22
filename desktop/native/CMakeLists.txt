@@ -70,13 +70,16 @@ if(WIN32)
         audio_devices.cpp
         folder_picker.cpp
         wasapi_output.cpp
+        asio_output.cpp
     )
     target_include_directories(allmeyn_desktop PRIVATE
         "${JDK_INCLUDE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/jni/win32"   # Windows jni_md.h (the host JDK's is for Linux)
     )
+    # Steinberg's ASIO SDK headers, unmodified (GPLv3 option; see third_party/asiosdk/README.vendored).
+    target_include_directories(allmeyn_desktop SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/asiosdk")
     target_compile_options(allmeyn_desktop PRIVATE -Wall -Wextra -Werror -O2)
-    target_link_libraries(allmeyn_desktop PRIVATE allmeyn_core ole32 uuid avrt ksuser shell32)
+    target_link_libraries(allmeyn_desktop PRIVATE allmeyn_core ole32 uuid avrt ksuser shell32 advapi32)
     # No lib prefix (System.load), no MinGW runtime DLLs, JNI symbols exported undecorated.
     set_target_properties(allmeyn_desktop PROPERTIES PREFIX "")
     target_link_options(allmeyn_desktop PRIVATE -static -static-libgcc -static-libstdc++ -Wl,--kill-at -s)

@@ -85,6 +85,7 @@ fun SettingsScreen(
                 Icon(BrandMark.vector, contentDescription = null, tint = BrandCopper, modifier = Modifier.size(width = 46.dp, height = 24.dp))
                 Text("All-Meyn Player · Your library. Your hardware. All yours.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            Text("ASIO is a trademark and software of Steinberg Media Technologies GmbH.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -109,7 +110,7 @@ private fun EngineCard() {
             is NativeEngine.Status.Ready -> {
                 Line("Decoder", "FFmpeg ${s.ffmpeg}")
                 Line("Formats", s.formats.joinToString(", "))
-                Line("DSD", "DoP in exclusive mode, else PCM; native DSD (ASIO) comes next")
+                Line("DSD", "Native with ASIO (when the driver does DSD), else DoP (exclusive or ASIO), else PCM")
             }
             is NativeEngine.Status.Unavailable -> Text(
                 "The audio engine didn't load: ${s.reason}",
@@ -123,7 +124,13 @@ private fun EngineCard() {
 @Composable
 private fun OutputCard(settings: OutputSettings, onChange: (OutputSettings) -> Unit) {
     var devices by remember { mutableStateOf<List<OutputDevice>?>(null) }
-    LaunchedEffect(Unit) { devices = withContext(Dispatchers.IO) { NativeEngine.devices() } }
+    var asio by remember { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            devices = NativeEngine.devices()
+            asio = NativeEngine.asioDriverNames()
+        }
+    }
     Panel("Output") {
         val list = devices
         val choices = listOf<OutputDevice?>(null) + list.orEmpty()
@@ -147,8 +154,27 @@ private fun OutputCard(settings: OutputSettings, onChange: (OutputSettings) -> U
             }
         }
         if (list == null) Text("Looking for outputs…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (asio.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text("ASIO drivers", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            asio.forEachIndexed { i, name ->
+                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                val id = OutputSettings.asioId(name)
+                Row(
+                    Modifier.fillMaxWidth().clickable { onChange(settings.copy(deviceId = id)) }.padding(vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    RadioButton(selected = settings.deviceId == id, onClick = { onChange(settings.copy(deviceId = id)) })
+                    Column(Modifier.padding(start = 8.dp)) {
+                        Text(name, fontWeight = FontWeight.Medium)
+                        Text("ASIO · bit-perfect · native DSD when the driver supports it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
         Spacer(Modifier.height(8.dp))
-        SwitchLine(
+        // ASIO always has the DAC to itself; exclusive is a WASAPI choice.
+        if (!settings.isAsio) SwitchLine(
             "Exclusive mode (bit-perfect)",
             "Each song goes to the DAC at its own rate and bit depth, untouched, bypassing the Windows mixer. " +
                 "Other apps can't play on this output meanwhile; use the DAC's volume.",
@@ -156,9 +182,12 @@ private fun OutputCard(settings: OutputSettings, onChange: (OutputSettings) -> U
         ) { onChange(settings.copy(exclusive = it)) }
         SwitchLine(
             "DSD as DoP",
-            if (settings.exclusive) "DSF/DFF reach the DAC as DSD (packed in PCM frames). Off: DSD plays as PCM."
-            else "Needs exclusive mode; DSD plays as PCM meanwhile.",
-            settings.dop, enabled = settings.exclusive,
+            when {
+                settings.isAsio -> "Native DSD comes first; DoP is used when the driver doesn't take DSD. Off: PCM instead."
+                settings.exclusive -> "DSF/DFF reach the DAC as DSD (packed in PCM frames). Off: DSD plays as PCM."
+                else -> "Needs exclusive mode; DSD plays as PCM meanwhile."
+            },
+            settings.dop, enabled = settings.dopPossible,
         ) { onChange(settings.copy(dop = it)) }
     }
 }

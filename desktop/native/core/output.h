@@ -16,7 +16,9 @@ struct StreamFormat {
     int sampleRate = 0;
     int channels = 0;
     int bits = 0;           // the source's bit depth (16/24/32), 0 if not meaningful (lossy, DSD as PCM)
-    bool bitExact = false;  // must reach the DAC unchanged (DoP): fail rather than convert or mix
+    bool bitExact = false;  // must reach the DAC unchanged (DoP, native DSD): fail rather than convert or mix
+    bool nativeDsd = false; // raw DSD words (see SourceInfo::nativeDsd); only outputs that do native DSD
+    int dsdRate = 0;        // DSD bit rate when nativeDsd
 };
 
 class Output {
