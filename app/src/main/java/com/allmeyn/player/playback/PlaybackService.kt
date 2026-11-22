@@ -19,6 +19,10 @@ import com.allmeyn.player.audio.AllMeynRenderersFactory
 import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.decode.DecodingDataSource
 import com.allmeyn.player.decode.DsdOutput
+import androidx.media3.common.Format
+import androidx.media3.exoplayer.DecoderReuseEvaluation
+import androidx.media3.exoplayer.analytics.AnalyticsListener
+import com.allmeyn.player.dsp.AirSource
 import com.allmeyn.player.dsp.DspParams
 import com.allmeyn.player.dsp.DspSettings
 import com.allmeyn.player.usb.UsbAudioDriver
@@ -114,6 +118,16 @@ class PlaybackService : MediaSessionService() {
         }
         DspSettings.addListener(dspListener)
         this.dspListener = dspListener
+
+        // Each song's codec and bitrate as it starts decoding: tells Air whether it's lossy and
+        // roughly where the encoder cut the treble.
+        player.addAnalyticsListener(object : AnalyticsListener {
+            override fun onAudioInputFormatChanged(
+                eventTime: AnalyticsListener.EventTime,
+                format: Format,
+                decoderReuseEvaluation: DecoderReuseEvaluation?,
+            ) = AirSource.set(format)
+        })
 
         // DSD only plays as DSD through the driver: turn it on when a DSD song starts.
         player.addListener(object : Player.Listener {

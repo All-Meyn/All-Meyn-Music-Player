@@ -109,7 +109,7 @@ fun SettingsScreen(
                 Column(Modifier.weight(1f)) {
                     Text("DSP", fontWeight = FontWeight.Medium)
                     Text(
-                        if (dspOn) "On: compressor/expander, bass and impact restoration" else "Off (bit-perfect)",
+                        if (dspOn) "On: compressor/expander, bass, impact and vocal restoration" else "Off (bit-perfect)",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

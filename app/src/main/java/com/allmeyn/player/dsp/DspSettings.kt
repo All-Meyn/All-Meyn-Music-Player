@@ -4,11 +4,12 @@ import android.content.Context
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.math.roundToInt
 
-/** The three processors of the chain; [id] matches the native Processor enum. */
+/** The processors of the chain; [id] matches the native Processor enum. */
 enum class DspProcessor(val id: Int, val label: String) {
     COMPANDER(0, "Compressor / Expander"),
     BASS(1, "Bass Restoration"),
     IMPACT(2, "Impact Restoration"),
+    VOCAL(3, "Vocal & Detail Restoration"),
 }
 
 /**
@@ -28,13 +29,21 @@ data class DspParams(
     val impactOn: Boolean = false,
     val impactPercent: Float = 50f,      // 0..100
     val impactReleaseMs: Float = 200f,   // 25..1500
+    val vocalOn: Boolean = false,
+    val presencePercent: Float = 50f,    // 0..100
+    val detailPercent: Float = 50f,      // 0..100
+    val airPercent: Float = 25f,         // 0..100
     val volumeDb: Float = 0f,            // -40..+10
     val softClip: Boolean = false,
-    val order: List<DspProcessor> = DspProcessor.entries.toList(),
+    val order: List<DspProcessor> = listOf(DspProcessor.VOCAL, DspProcessor.COMPANDER, DspProcessor.BASS, DspProcessor.IMPACT),
 ) {
-    /** Clamped to the valid ranges; the order fixed up to contain each processor once. */
+    /**
+     * Clamped to the valid ranges; the order fixed up to contain each processor once, with Vocal &
+     * Detail Restoration always first.
+     */
     fun sanitized(): DspParams {
-        val fixedOrder = (order.distinct() + DspProcessor.entries).distinct()
+        val fixedOrder = listOf(DspProcessor.VOCAL) +
+            (order.distinct() + DspProcessor.entries).distinct().filter { it != DspProcessor.VOCAL }
         return copy(
             expansionPercent = expansionPercent.coerceIn(-50f, 50f),
             transitionDb = transitionDb.coerceIn(-40f, 0f),
@@ -43,13 +52,16 @@ data class DspParams(
             bassTransitionDb = bassTransitionDb.coerceIn(-40f, 0f),
             impactPercent = impactPercent.coerceIn(0f, 100f),
             impactReleaseMs = impactReleaseMs.coerceIn(25f, 1500f),
+            presencePercent = presencePercent.coerceIn(0f, 100f),
+            detailPercent = detailPercent.coerceIn(0f, 100f),
+            airPercent = airPercent.coerceIn(0f, 100f),
             volumeDb = volumeDb.coerceIn(-40f, 10f),
             order = fixedOrder,
         )
     }
 
     /** Whether the chain changes the audio at all (master on and something to do). */
-    val processes: Boolean get() = enabled && (companderOn || bassOn || impactOn || volumeDb != 0f || softClip)
+    val processes: Boolean get() = enabled && (companderOn || bassOn || impactOn || vocalOn || volumeDb != 0f || softClip)
 
     /** The layout NativeDsp.setParams expects. */
     fun toNativeValues() = floatArrayOf(
@@ -57,6 +69,7 @@ data class DspParams(
         if (bassOn) 1f else 0f, bassPercent, bassTransitionDb,
         if (impactOn) 1f else 0f, impactPercent, impactReleaseMs,
         volumeDb, if (softClip) 1f else 0f,
+        if (vocalOn) 1f else 0f, presencePercent, detailPercent, airPercent,
     )
 
     fun toNativeOrder() = order.map { it.id }.toIntArray()
@@ -84,9 +97,12 @@ data class DspMeters(
     val bassDb: Float = 0f,
     val impactDb: FloatArray = FloatArray(4),
     val outputPeak: Float = 0f,
+    val vocalDb: Float = 0f,
+    /** Treble cutoff Air is working with; 0 = full-range source. */
+    val airCutoffHz: Float = 0f,
 ) {
     companion object {
-        fun from(m: FloatArray) = DspMeters(m.copyOfRange(0, 4), m[4], m.copyOfRange(5, 9), m[9])
+        fun from(m: FloatArray) = DspMeters(m.copyOfRange(0, 4), m[4], m.copyOfRange(5, 9), m[9], m[10], m[11])
     }
 }
 
@@ -123,6 +139,10 @@ object DspSettings {
             impactOn = p.getBoolean("impactOn", d.impactOn),
             impactPercent = p.getFloat("impactPercent", d.impactPercent),
             impactReleaseMs = p.getFloat("impactReleaseMs", d.impactReleaseMs),
+            vocalOn = p.getBoolean("vocalOn", d.vocalOn),
+            presencePercent = p.getFloat("presencePercent", d.presencePercent),
+            detailPercent = p.getFloat("detailPercent", d.detailPercent),
+            airPercent = p.getFloat("airPercent", d.airPercent),
             volumeDb = p.getFloat("volumeDb", d.volumeDb),
             softClip = p.getBoolean("softClip", d.softClip),
             order = p.getString("order", null)?.split(',')
@@ -149,6 +169,10 @@ object DspSettings {
             .putBoolean("impactOn", new.impactOn)
             .putFloat("impactPercent", new.impactPercent)
             .putFloat("impactReleaseMs", new.impactReleaseMs)
+            .putBoolean("vocalOn", new.vocalOn)
+            .putFloat("presencePercent", new.presencePercent)
+            .putFloat("detailPercent", new.detailPercent)
+            .putFloat("airPercent", new.airPercent)
             .putFloat("volumeDb", new.volumeDb)
             .putBoolean("softClip", new.softClip)
             .putString("order", new.order.joinToString(",") { it.name })

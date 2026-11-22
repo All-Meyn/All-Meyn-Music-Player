@@ -1,7 +1,15 @@
-// All-Meyn DSP chain: Compressor/Expander (4 bands), Bass Restoration, Impact Restoration, and an
-// output stage (Volume, Soft Clip). Each processor has its own crossovers and detectors, its own
-// on/off (crossfaded, so toggling never clicks), and the three processors run in a user-chosen
-// order.
+// All-Meyn DSP chain: Compressor/Expander (4 bands), Bass Restoration, Impact Restoration, Vocal &
+// Detail Restoration, and an output stage (Volume, Soft Clip). Each processor has its own
+// crossovers and detectors, its own on/off (crossfaded, so toggling never clicks), and the
+// processors run in a user-chosen order.
+//
+// Vocal & Detail Restoration works on the mid (L+R) signal only, so the stereo image is kept:
+// Presence lifts consonant attacks in the 300 Hz - 4.5 kHz vocal band, Detail gently raises that
+// band when it's quiet (upward expansion, up to about +3 dB), and Air adds harmonics and lift
+// above about 9 kHz, generated at twice the sample rate so they don't alias. On lossy sources
+// (MP3, AAC...) the harmonics come from the octave below the codec's treble cutoff, so they fill
+// the empty band above it; the cutoff comes from the file's bitrate (setSource) and is confirmed
+// or corrected by CutoffDetector.
 //
 // The maths and constants are ported from Tetra-Expand (github.com/All-Meyn/Tri-Expand,
 // Source/DSP/MultiBandExpander.* and ExpanderConstants.h, GPLv3) without JUCE: the
@@ -20,7 +28,7 @@ constexpr int kBands = 4;
 constexpr int kMaxChannels = 2;
 
 /** Which processor sits in a chain slot. */
-enum Processor : int { kCompander = 0, kBass = 1, kImpact = 2, kNumProcessors = 3 };
+enum Processor : int { kCompander = 0, kBass = 1, kImpact = 2, kVocal = 3, kNumProcessors = 4 };
 
 struct Params {
     // Compressor / Expander
@@ -36,11 +44,17 @@ struct Params {
     bool  impactOn = false;
     float impactPercent = 50.0f;     // 0..100: ceiling of the boost, 100 % = +12 dB
     float impactReleaseMs = 200.0f;  // 25..1500
+    // Vocal & Detail Restoration
+    bool  vocalOn = false;
+    float presencePercent = 50.0f;   // 0..100: consonant / attack lift in the vocal band
+    float detailPercent = 50.0f;     // 0..100: upward expansion of the quiet vocal band
+    float airPercent = 25.0f;        // 0..100: harmonics and lift above ~9 kHz
     // Output
     float volumeDb = 0.0f;           // -40..+10
     bool  softClip = false;
-    // Processing order of the three processors (a permutation of 0..2).
-    int   order[kNumProcessors] = {kCompander, kBass, kImpact};
+    // Processing order of the processors (a permutation of 0..kNumProcessors-1). Vocal & Detail
+    // Restoration always runs first: setParams moves it to the front whatever order is given.
+    int   order[kNumProcessors] = {kVocal, kCompander, kBass, kImpact};
 };
 
 /** Readings for the UI. */
@@ -49,8 +63,10 @@ struct Meters {
     float bassDb;               // Bass Restoration gain
     float impactDb[kBands];     // impact boost per band
     float outputPeak;           // largest |output| in the last call
+    float vocalDb;              // Vocal & Detail Restoration gain on the vocal band
+    float airCutoffHz;          // treble cutoff Air is working with; 0 = full-range source
 };
-constexpr int kMeterCount = kBands + 1 + kBands + 1;
+constexpr int kMeterCount = kBands + 1 + kBands + 1 + 1 + 1;
 
 /** juce::dsp::LinkwitzRileyFilter (LR4, TPT): both outputs, or the matching allpass. */
 class LR4 {
@@ -92,6 +108,64 @@ private:
     static int allpassIndex(int band, int crossover);
 };
 
+/** 2nd-order lowpass or highpass (RBJ cookbook), transposed direct form II, one channel. */
+class Biquad {
+public:
+    void setup(double cutoffHz, double sampleRate, double q);           // lowpass
+    void setupHighpass(double cutoffHz, double sampleRate, double q);   // keeps the state
+    void reset() { z1 = z2 = 0; }
+    float process(float x) {
+        const float y = b0 * x + z1;
+        z1 = b1 * x - a1 * y + z2;
+        z2 = b2 * x - a2 * y;
+        return y;
+    }
+    void snapToZero();
+private:
+    float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
+};
+
+/**
+ * Finds a lossy codec's treble cutoff: a cliff in the spectrum above which there's (almost)
+ * nothing. Hann-windowed Goertzel probes at 10, 11 ... 21 kHz measure ~50 ms windows; their power
+ * is averaged over ~3 s, weighted by loudness. A cutoff is a probe whose every higher neighbour is
+ * [cliff dB] below it; a natural treble roll-off is a few dB per kHz and never qualifies. Quiet
+ * windows don't count, so a quiet passage keeps the last result. Cliffs at 19 kHz and above count
+ * as full range (Air's harmonics stop at ~19.5 kHz anyway).
+ */
+class CutoffDetector {
+public:
+    static constexpr int kMaxProbes = 12;
+    void setup(double sampleRate);
+    /** A new song: lossy (with the bitrate's [priorHz] guess, 0 = none) or lossless. Clears evidence. */
+    void setSource(bool lossy, float priorHz);
+    void process(float x);
+    float cutoffHz() const { return cutoff; }
+private:
+    void endWindow();
+    int probes = 0, window = 0, pos = 0;
+    double windowSeconds = 0, decay = 0;
+    double coeff[kMaxProbes] {}, s1[kMaxProbes] {}, s2[kMaxProbes] {}, acc[kMaxProbes] {};
+    float hz[kMaxProbes] {};
+    double wc = 1, ws = 0, cosStep = 1, sinStep = 0;  // Hann window phasor
+    double evidence = 0;      // seconds of loud audio seen for this song
+    bool lossy = false;
+    float cutoff = 0, candidate = -1;
+    int candidateRuns = 0;
+};
+
+/** Vocal & Detail Restoration state (mid signal only). */
+struct VocalState {
+    float lp = 0, bp = 0;              // vocal band: highpass ~300 Hz, then lowpass ~4.5 kHz
+    float envFast = 0, envSlow = 0;    // attack (1 ms / 15 ms) and body (35 ms / 120 ms) followers
+    float airHp = 0, airHp2 = 0;       // air highpass ~9 kHz, at 1x and at 2x rate
+    float airEnv = 0;                  // level of the harmonic source band (2x rate)
+    Biquad up1, up2, down1, down2;     // 4th-order Butterworth anti-imaging / anti-aliasing at 2x
+    Biquad fill1, fill2;               // keeps only harmonics above the fill frequency (2x)
+    float gain = 1;                    // last vocal-band gain, for the meter
+    void reset();
+};
+
 class Chain {
 public:
     Chain(double sampleRate, int channels);
@@ -119,6 +193,12 @@ private:
     void runCompander(float x[kMaxChannels], int n);
     void runBass(float x[kMaxChannels], int n);
     void runImpact(float x[kMaxChannels], int n);
+    void runVocal(float x[kMaxChannels], int n);
+public:
+    /** The song's source, from the file: see CutoffDetector::setSource. */
+    void setSource(bool lossy, float priorCutoffHz) { cutoffDet.setSource(lossy, priorCutoffHz); }
+private:
+    float airSubSample(float x, float amount);
 
     double sr;
     int chans;
@@ -134,14 +214,22 @@ private:
     Smoothed ratioMinusOne, transition, hfTransition;
     Smoothed bassRatio, bassPivot;
     Smoothed impactAmount, volumeDb;
+    Smoothed vocalMix, presence, detail, air;
     float lastReleaseMs = -1;
     bool softClip = false;
 
+    VocalState voc;
+    float vocLowC, vocHighC, airC, airC2;          // one-pole coefficients (airC2 at 2x rate)
+    float airC2Target = 0, airSlewC = 0, lastCutoff = -1;
+    float airEnvAttC = 0, airEnvRelC = 0;          // harmonic source envelope (2x rate)
+    CutoffDetector cutoffDet;
+    float attFast, relFast, attSlow, relSlow;      // envelope poles
+
     // Set when a processor was skipped (off) or the chain was reset: on its next run it starts from
     // fresh filters and neutral detectors (unity gain, no false impact), not from stale or silent state.
-    bool compFresh = true, bassFresh = true, impFresh = true;
+    bool compFresh = true, bassFresh = true, impFresh = true, vocFresh = true;
 
-    int order[kNumProcessors] = {kCompander, kBass, kImpact};
+    int order[kNumProcessors] = {kVocal, kCompander, kBass, kImpact};
     Meters m {};
 };
 
