@@ -2,6 +2,7 @@ package com.allmeyn.player.usb
 
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.Util
 import androidx.media3.exoplayer.audio.AudioOutput
 import android.media.AudioDeviceInfo
 import java.nio.ByteBuffer
@@ -25,9 +26,15 @@ class UsbAudioOutput(
     private val token: Int,
     private val sampleRate: Int,
     private val audioSessionId: Int,
+    /**
+     * Native DSD only (else 0): bytes at the start of this output that Media3 has faded in and
+     * that must become DSD silence (see [silenceRamp]).
+     */
+    private val dsdRampBytes: Long = 0,
 ) : AudioOutput {
 
     private val listeners = CopyOnWriteArrayList<AudioOutput.Listener>()
+    private var bytesWritten = 0L
     private var notifiedAdvancing = false
     private var lastPositionUs = 0L
     private var released = false
@@ -52,11 +59,13 @@ class UsbAudioOutput(
     override fun write(buffer: ByteBuffer, encodedAccessUnitCount: Int, presentationTimeUs: Long): Boolean {
         if (!isCurrent) return false // isStalled() is now true: the sink rebuilds the output
         val position = buffer.position()
+        if (bytesWritten < dsdRampBytes) silenceRamp(buffer, bytesWritten, dsdRampBytes)
         val consumed = NativeUsb.write(buffer, position, buffer.remaining())
         if (consumed < 0) {
             writeFailed = true
             return false
         }
+        bytesWritten += consumed
         buffer.position(position + consumed)
         return !buffer.hasRemaining()
     }
@@ -106,4 +115,30 @@ class UsbAudioOutput(
     override fun attachAuxEffect(effectId: Int) {}
     override fun setAuxEffectSendLevel(level: Float) {}
     override fun setPreferredDevice(preferredDevice: AudioDeviceInfo?) {}
+
+    companion object {
+        /** DefaultAudioSink's AUDIO_OUTPUT_VOLUME_RAMP_TIME_MS (Media3 1.9). */
+        private const val MEDIA3_RAMP_US = 20_000L
+        private const val DSD_IDLE: Byte = 0x69
+
+        /**
+         * Media3's DefaultAudioSink fades in the first 20 ms written to every new output (each
+         * seek, skip and format change) by scaling the samples. For PCM that's a quiet fade-in;
+         * native DSD travels as 16-bit PCM, so scaling its raw DSD bytes turns them into a burst
+         * of noise. Those bytes can't be restored, so they are sent as DSD silence instead.
+         */
+        fun dsdRampBytes(sampleRate: Int, frameBytes: Int): Long =
+            Util.durationUsToSampleCount(MEDIA3_RAMP_US, sampleRate) * frameBytes
+
+        /**
+         * Overwrites the part of [buffer] (from its position) that lies within the first
+         * [rampBytes] bytes of the output, given [written] bytes already sent, with DSD silence.
+         * Doesn't move the position. Writing the same bytes again (a retried write) is harmless.
+         */
+        internal fun silenceRamp(buffer: ByteBuffer, written: Long, rampBytes: Long) {
+            val n = minOf(buffer.remaining().toLong(), rampBytes - written).toInt()
+            val start = buffer.position()
+            for (i in start until start + n) buffer.put(i, DSD_IDLE)
+        }
+    }
 }
