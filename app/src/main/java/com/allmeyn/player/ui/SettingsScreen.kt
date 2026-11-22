@@ -1,5 +1,10 @@
 package com.allmeyn.player.ui
 
+import androidx.compose.foundation.layout.size
+import com.allmeyn.player.R
+import androidx.compose.ui.res.vectorResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.vector.ImageVector
 import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -230,10 +235,11 @@ fun SettingsScreen(
             LinearProgressIndicator(progress = { peak }, modifier = Modifier.fillMaxWidth())
         }
 
-        Text(
-            "All-Meyn Player ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.align(Alignment.CenterHorizontally),
-        )
+        Column(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(ImageVector.vectorResource(R.drawable.ic_brand_mark), null, Modifier.size(48.dp), tint = BrandCopper)
+            Text("All-Meyn Player ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelMedium)
+            Text(stringResource(R.string.tagline), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }
 

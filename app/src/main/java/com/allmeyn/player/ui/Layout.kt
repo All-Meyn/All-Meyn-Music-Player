@@ -19,6 +19,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
@@ -64,6 +65,9 @@ fun belowBars(start: Dp = 0.dp, top: Dp = 0.dp, end: Dp = 0.dp, bottom: Dp = 0.d
     return PaddingValues(start + side, top, end + side, bottom + LocalBottomBarPadding.current)
 }
 
+/** The logo's copper, for the brand mark. */
+val BrandCopper = Color(0xFFD98B52)
+
 /** The one look for "nothing here": icon, title, a line of help and an optional action. */
 @Composable
 fun EmptyState(
@@ -72,6 +76,8 @@ fun EmptyState(
     message: String = "",
     action: String? = null,
     modifier: Modifier = Modifier,
+    iconTint: Color = MaterialTheme.colorScheme.primary,
+    iconSize: Dp = 56.dp,
     onAction: () -> Unit = {},
 ) {
     Column(
@@ -79,7 +85,7 @@ fun EmptyState(
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Icon(icon, null, Modifier.size(56.dp), tint = MaterialTheme.colorScheme.primary)
+        Icon(icon, null, Modifier.size(iconSize), tint = iconTint)
         Spacer(Modifier.height(16.dp))
         Text(title, style = MaterialTheme.typography.titleMedium, textAlign = TextAlign.Center)
         if (message.isNotEmpty()) {

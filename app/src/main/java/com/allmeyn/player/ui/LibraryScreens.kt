@@ -41,6 +41,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
+import com.allmeyn.player.R
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.allmeyn.player.library.Album
@@ -57,10 +61,11 @@ fun EmptyLibrary(scanning: Boolean, progress: String, onAddFolder: () -> Unit) {
     if (scanning) {
         EmptyState(PlayerIcons.Note, "Scanning your music…", progress)
     } else {
+        // First run: the brand mark and tagline, then the one thing to do.
         EmptyState(
-            PlayerIcons.Note, "Add your music folder",
+            ImageVector.vectorResource(R.drawable.ic_brand_mark), stringResource(R.string.tagline),
             "Pick the folder that holds your music (e.g. Music). All-Meyn scans it, including DSF, DFF, APE and WavPack.",
-            action = "Choose folder", onAction = onAddFolder,
+            action = "Choose folder", iconTint = BrandCopper, iconSize = 96.dp, onAction = onAddFolder,
         )
     }
 }

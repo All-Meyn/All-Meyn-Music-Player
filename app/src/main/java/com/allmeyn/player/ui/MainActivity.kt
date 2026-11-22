@@ -45,10 +45,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -105,7 +101,14 @@ class MainActivity : ComponentActivity() {
         val app = application as AllMeynApp
         // Launched by plugging in the DAC ("Always open All-Meyn"): permission is granted now.
         app.usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
-        setContent { AllMeynTheme { ProvideWindowSize { AppRoot(controller, app) } } }
+        setContent {
+            // The animated intro (once per launch) sits above the glass layer: glass elements are
+            // drawn over everything else inside LiquidGlassTheme, so inside it the glass buttons
+            // and bars showed through the intro.
+            AllMeynTheme(overlay = { StartupOverlay() }) {
+                ProvideWindowSize { AppRoot(controller, app) }
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -133,19 +136,18 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun AllMeynTheme(content: @Composable () -> Unit) {
+private fun AllMeynTheme(overlay: @Composable () -> Unit = {}, content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
-    val context = LocalContext.current
-    val scheme = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        dark -> darkColorScheme()
-        else -> lightColorScheme()
-    }
+    // The brand's copper on cool, near-neutral greys (the logo's tile), in place of wallpaper colours.
+    val scheme = if (dark) AllMeynDarkColors else AllMeynLightColors
     // Liquid Glass: records the screen once per frame; every glass element below refracts it. The
     // dialogs and menus draw in this window too, so it wraps everything, the playlist dialog included.
     MaterialTheme(colorScheme = scheme) {
-        LiquidGlassTheme(dark = dark, background = scheme.surface) {
-            Surface(Modifier.fillMaxSize()) { content() }
+        Box(Modifier.fillMaxSize()) {
+            LiquidGlassTheme(dark = dark, background = scheme.surface) {
+                Surface(Modifier.fillMaxSize()) { content() }
+            }
+            overlay() // drawn after (above) the glass layer
         }
     }
 }
@@ -188,6 +190,9 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     val pickFolder = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) app.library.addFolder(uri)
     }
+    // "Add folder" first explains, in our style, the system picker that comes next.
+    var choosingFolder by rememberSaveable { mutableStateOf(false) }
+    val addFolder = { choosingFolder = true }
 
     // Live readouts: plugin meter, decoder, driver status.
     var peak by remember { mutableFloatStateOf(0f) }
@@ -226,6 +231,13 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     val route = driverStatus.lineSequence().firstOrNull { it.startsWith("Player output:") }?.substringAfter(": ").orEmpty()
 
     ArtBackdrop(player.artPath, backdropStrength)
+
+    if (choosingFolder) {
+        ChooseFolderSheet(
+            onContinue = { choosingFolder = false; pickFolder.launch(MusicFolderUri) },
+            onDismiss = { choosingFolder = false },
+        )
+    }
 
     pendingAdd?.let { songs ->
         AddToPlaylistDialog(
@@ -380,7 +392,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                         Route.SettingsRoute -> SettingsScreen(
                             library = library,
                             folderLabel = app.library::folderLabel,
-                            onAddFolder = { pickFolder.launch(null) },
+                            onAddFolder = addFolder,
                             onRemoveFolder = app.library::removeFolder,
                             onRescan = app.library::rescan,
                             driver = driver,
@@ -404,7 +416,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                             peak = peak,
                         )
                         null -> if (library.tracks.isEmpty()) {
-                            EmptyLibrary(library.scanning || !library.loaded, library.progress) { pickFolder.launch(null) }
+                            EmptyLibrary(library.scanning || !library.loaded, library.progress, addFolder)
                         } else {
                             Column {
                                 if (library.scanning) {

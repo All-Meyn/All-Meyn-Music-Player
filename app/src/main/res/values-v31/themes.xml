@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Android 12+ launch screen: the launcher icon on the logo's near-black. -->
+    <style name="Theme.AllMeyn" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowSplashScreenBackground">#FF0D0E12</item>
+    </style>
+</resources>
