@@ -77,7 +77,12 @@ public:
                               : (av_get_bytes_per_sample(codec_->sample_fmt) > 0 && !av_sample_fmt_is_planar(codec_->sample_fmt) &&
                                  codec_->sample_fmt != AV_SAMPLE_FMT_FLT && codec_->sample_fmt != AV_SAMPLE_FMT_FLTP
                                      ? av_get_bytes_per_sample(codec_->sample_fmt) * 8 : 0);
-        if (isLossyCodec(codec_->codec_id)) info_.bitsPerSample = 0;
+        if (isLossyCodec(codec_->codec_id)) {
+            info_.bitsPerSample = 0;
+            info_.lossy = true;
+            const int64_t br = st->codecpar->bit_rate > 0 ? st->codecpar->bit_rate : format_->bit_rate;
+            info_.bitrate = br > 0 && br < INT32_MAX ? (int) br : 0;
+        }
         if (st->duration != AV_NOPTS_VALUE && st->duration > 0) {
             info_.totalFrames = av_rescale_q(st->duration, timeBase_, AVRational{1, info_.sampleRate});
         } else if (format_->duration > 0) {

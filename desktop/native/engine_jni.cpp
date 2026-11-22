@@ -116,6 +116,41 @@ JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetOut
     player().setDsdModes(dop == JNI_TRUE && (asio || exclusive == JNI_TRUE), /*native=*/asio);
 }
 
+/**
+ * The DSP chain (the Android app's), applied at once. [values] as the Android NativeDsp.setParams:
+ * [companderOn, expansion%, transitionDb, hfTransitionDb, bassOn, bass%, bassTransitionDb, impactOn,
+ *  impact%, impactReleaseMs, volumeDb, softClip, vocalOn, presence%, detail%, air%]; [order]: the
+ * processor ids (Vocal is always put first). With the DSP processing, DSD songs open as PCM.
+ */
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetDsp(JNIEnv* env, jclass, jboolean enabled, jfloatArray values, jintArray order) {
+    constexpr int kValues = 16;
+    if (!values || !order || env->GetArrayLength(values) < kValues || env->GetArrayLength(order) < allmeyn::dsp::kNumProcessors) return;
+    jfloat v[kValues];
+    jint o[allmeyn::dsp::kNumProcessors];
+    env->GetFloatArrayRegion(values, 0, kValues, v);
+    env->GetIntArrayRegion(order, 0, allmeyn::dsp::kNumProcessors, o);
+    allmeyn::DspSettings s;
+    s.enabled = enabled == JNI_TRUE;
+    auto& p = s.params;
+    p.companderOn = v[0] != 0; p.expansionPercent = v[1]; p.transitionDb = v[2]; p.hfTransitionDb = v[3];
+    p.bassOn = v[4] != 0; p.bassPercent = v[5]; p.bassTransitionDb = v[6];
+    p.impactOn = v[7] != 0; p.impactPercent = v[8]; p.impactReleaseMs = v[9];
+    p.volumeDb = v[10]; p.softClip = v[11] != 0;
+    p.vocalOn = v[12] != 0; p.presencePercent = v[13]; p.detailPercent = v[14]; p.airPercent = v[15];
+    for (int i = 0; i < allmeyn::dsp::kNumProcessors; i++) p.order[i] = o[i];
+    player().setDsp(s);
+}
+
+/** The DSP meters (Android NativeDsp layout, 12 floats) while the chain processes; else null. */
+JNIEXPORT jfloatArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerDspMeters(JNIEnv* env, jclass) {
+    allmeyn::dsp::Meters m{};
+    if (!player().dspMeters(m)) return nullptr;
+    static_assert(sizeof(allmeyn::dsp::Meters) == allmeyn::dsp::kMeterCount * sizeof(float), "meters are plain floats");
+    jfloatArray out = env->NewFloatArray(allmeyn::dsp::kMeterCount);
+    if (out) env->SetFloatArrayRegion(out, 0, allmeyn::dsp::kMeterCount, reinterpret_cast<const jfloat*>(&m));
+    return out;
+}
+
 /** Opens a song (paused at the start). Returns null, or why it can't be played. */
 JNIEXPORT jstring JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerOpen(JNIEnv* env, jclass, jstring path) {
     std::lock_guard<std::mutex> g(g_lock);

@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.allmeyn.desktop.engine.DspStore
 import com.allmeyn.desktop.engine.OutputSettings
 import com.allmeyn.desktop.engine.PlayState
 import com.allmeyn.desktop.engine.TrackInfo
@@ -45,7 +46,7 @@ import kotlinx.coroutines.launch
 
 private val SECTIONS = listOf(
     "Albums" to Route.Albums, "Artists" to Route.Artists, "Songs" to Route.Songs,
-    "Folders" to Route.Folders(), "Queue" to Route.Queue, "Settings" to Route.Settings,
+    "Folders" to Route.Folders(), "Queue" to Route.Queue, "DSP" to Route.Dsp, "Settings" to Route.Settings,
 )
 
 /** The whole window: sidebar (search, sections), the current screen, and the player bar. */
@@ -53,6 +54,7 @@ private val SECTIONS = listOf(
 fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> String?) {
     val scope = rememberCoroutineScope()
     var output by remember { mutableStateOf(OutputSettings.load().also { it.apply() }) }
+    var dsp by remember { mutableStateOf(DspStore.load().also(DspStore::apply)) }
     val stack = remember { mutableStateListOf<Route>(Route.Albums) }
     var query by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { library.start() }
@@ -103,7 +105,7 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 val view = library.view
                 val route = stack.last()
-                val needsMusic = route !is Route.Settings && route !is Route.Queue
+                val needsMusic = route !is Route.Settings && route !is Route.Queue && route !is Route.Dsp
                 when {
                     query.isNotBlank() -> SearchResults(
                         view.search.find(query), player,
@@ -120,6 +122,18 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                         Route.Songs -> SongList(view.songs, player)
                         is Route.Folders -> FolderBrowser(view.folders, route.path, player, onOpen = { push(Route.Folders(it)) }, onBack = if (stack.size > 1) ::back else null)
                         Route.Queue -> QueueScreen(player)
+                        Route.Dsp -> DspScreen(dsp) { change ->
+                            val old = dsp
+                            val new = change(old).sanitized()
+                            if (new != old) {
+                                dsp = new
+                                DspStore.save(new)
+                                DspStore.apply(new)
+                                // Processing on/off changes how the song reaches the DAC (DSD as PCM,
+                                // no bit-perfect claim): reopen it, from the same spot.
+                                if (new.processes != old.processes) player.reopen()
+                            }
+                        }
                         Route.Settings -> SettingsScreen(
                             library, output,
                             onOutputChange = { new ->
