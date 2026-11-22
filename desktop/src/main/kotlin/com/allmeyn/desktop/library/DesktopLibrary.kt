@@ -70,16 +70,16 @@ class DesktopLibrary(private val dataDir: File = defaultDataDir()) {
 
     suspend fun addFolder(path: String) {
         if (path in folders) return
-        setFolders(folders + path)
+        saveFolders(folders + path)
         rescan()
     }
 
     suspend fun removeFolder(path: String) {
-        setFolders(folders - path)
+        saveFolders(folders - path)
         rescan()
     }
 
-    private fun setFolders(list: List<String>) {
+    private fun saveFolders(list: List<String>) {
         folders = list
         prefs.put(KEY_FOLDERS, list.joinToString("\n"))
     }
