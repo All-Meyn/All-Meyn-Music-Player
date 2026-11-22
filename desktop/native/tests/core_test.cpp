@@ -11,6 +11,7 @@
 
 #include "core/player.h"
 #include "core/source.h"
+#include "core/tags.h"
 
 using namespace allmeyn;
 
@@ -213,6 +214,132 @@ static void testPlayer() {
     check(player.state() == PlayerState::Idle, "player: closes");
 }
 
+// ---- gapless --------------------------------------------------------------------------------------
+static void testGapless() {
+    FakeOutput* fake = nullptr;
+    Player player([&] { auto o = std::make_unique<FakeOutput>(); fake = o.get(); return o; });
+    std::string err, e2;
+    auto ref16 = openSource(asset("clip16.flac"), e2);
+    auto ref24 = openSource(asset("clip24.flac"), e2);
+    const auto a = decodeAll(*ref16), b = decodeAll(*ref24);  // both 44.1 kHz stereo: compatible
+    auto pullFrames = [&](int n) {
+        std::vector<float> out, buf(512 * 2);
+        for (int tries = 0; (int) out.size() < n * 2 && tries < 8000; tries++) {
+            const int got = fake->pull(buf.data(), std::min(512, n - (int) out.size() / 2));
+            out.insert(out.end(), buf.begin(), buf.begin() + got * 2);
+            if (got == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return out;
+    };
+    check(player.open(asset("clip16.flac"), err) && player.setNext(asset("clip24.flac"), err), "gapless: opens a song and queues the next " + err);
+    player.play();
+    const int serial0 = player.trackSerial();
+    auto first = pullFrames(80000);
+    check(player.trackSerial() == serial0 && player.info().bitsPerSample == 16, "gapless: still on the first song before the join");
+    auto across = pullFrames(16000);  // 8200 frames of song 1, then 7800 of song 2
+    std::vector<float> want(a.begin() + 80000 * 2, a.end());
+    want.insert(want.end(), b.begin(), b.begin() + 7800 * 2);
+    check(across.size() == want.size() && !memcmp(across.data(), want.data(), want.size() * sizeof(float)),
+          "gapless: the join is seamless (last sample of one, first of the next, nothing between)");
+    check(player.trackSerial() == serial0 + 1 && player.info().bitsPerSample == 24 && player.positionFrames() == 7800,
+          "gapless: now on the second song, position counts from its start", (double) player.positionFrames());
+
+    // Seek while a join is decoded but not yet heard: back on the first song, exactly.
+    check(player.open(asset("clip16.flac"), err) && player.setNext(asset("clip24.flac"), err), "gapless: reopen for the seek test");
+    player.play();
+    pullFrames(87000);  // the decoder is already past the join (1 s ring)
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    player.seek(20000);
+    auto back = pullFrames(2000);
+    check(back.size() == 4000 && !memcmp(back.data(), a.data() + 20000 * 2, back.size() * sizeof(float)) && player.info().bitsPerSample == 16,
+          "gapless: a seek before the join is heard stays on the heard song");
+    pullFrames(88200 - 22000);
+    auto next = pullFrames(1000);
+    check(!memcmp(next.data(), b.data(), next.size() * sizeof(float)) && player.info().bitsPerSample == 24,
+          "gapless: ...and the next song still follows seamlessly");
+
+    // A next song in another format can't join: the player ends, the caller opens it.
+    check(player.open(asset("clip16.flac"), err) && player.setNext(writeDsf(0.2), err), "gapless: queue a 176.4 kHz DSF after 44.1 kHz");
+    player.play();
+    pullFrames(88200);
+    std::vector<float> buf(512 * 2);
+    for (int i = 0; i < 50 && player.state() != PlayerState::Ended; i++) { fake->pull(buf.data(), 512); std::this_thread::sleep_for(std::chrono::milliseconds(2)); }
+    check(player.state() == PlayerState::Ended && player.info().bitsPerSample == 16, "gapless: a different format ends the song instead");
+    player.close();
+}
+
+// ---- tags -------------------------------------------------------------------------------------------
+/** clip.mp3 with an ID3v2.3 tag in front: text frames and an APIC cover ([cover] bytes). */
+static std::string writeTaggedMp3(const std::vector<uint8_t>& cover) {
+    std::vector<uint8_t> frames;
+    auto frame = [&](const char* id, const std::vector<uint8_t>& body) {
+        frames.insert(frames.end(), id, id + 4);
+        const uint32_t n = (uint32_t) body.size();
+        for (int i = 3; i >= 0; i--) frames.push_back((uint8_t) (n >> (8 * i)));
+        frames.push_back(0); frames.push_back(0);
+        frames.insert(frames.end(), body.begin(), body.end());
+    };
+    auto text = [&](const char* id, const std::string& v) {
+        std::vector<uint8_t> b{3};  // UTF-8
+        b.insert(b.end(), v.begin(), v.end());
+        frame(id, b);
+    };
+    text("TIT2", "Hoppípolla");
+    text("TPE1", "Sigur Rós");
+    text("TALB", "Takk...");
+    text("TPE2", "Sigur Rós (album)");
+    text("TRCK", "3/12");
+    text("TPOS", "1/2");
+    text("TYER", "2005");
+    std::vector<uint8_t> apic{0};  // Latin-1
+    const std::string mime = "image/png";
+    apic.insert(apic.end(), mime.begin(), mime.end());
+    apic.push_back(0);
+    apic.push_back(3);   // front cover
+    apic.push_back(0);   // empty description
+    apic.insert(apic.end(), cover.begin(), cover.end());
+    frame("APIC", apic);
+    std::vector<uint8_t> out{'I', 'D', '3', 3, 0, 0};
+    const uint32_t size = (uint32_t) frames.size();
+    for (int i = 3; i >= 0; i--) out.push_back((uint8_t) ((size >> (7 * i)) & 0x7F));  // syncsafe
+    out.insert(out.end(), frames.begin(), frames.end());
+    FILE* in = std::fopen(asset("clip.mp3").c_str(), "rb");
+    std::vector<uint8_t> mp3(1 << 20);
+    mp3.resize(std::fread(mp3.data(), 1, mp3.size(), in));
+    std::fclose(in);
+    out.insert(out.end(), mp3.begin(), mp3.end());
+    const std::string path = "/tmp/allmeyn_tagged.mp3";
+    FILE* f = std::fopen(path.c_str(), "wb");
+    std::fwrite(out.data(), 1, out.size(), f);
+    std::fclose(f);
+    return path;
+}
+
+static void testTags() {
+    struct Want { const char* name; const char* format; int rate; int bits; };
+    for (const Want& w : {Want{"clip16.flac", "FLAC", 44100, 16}, Want{"clip24.flac", "FLAC", 44100, 24}, Want{"clip24.m4a", "ALAC", 44100, 24},
+                          Want{"clip16.ape", "APE", 44100, 16}, Want{"clip24.wv", "WavPack", 44100, 24}, Want{"clip.mp3", "MP3", 44100, 0},
+                          Want{"clip.m4a", "AAC", 44100, 0}}) {
+        const TagInfo t = readTags(asset(w.name));
+        check(t.ok && t.format == w.format && t.sampleRate == w.rate && t.bits == w.bits && std::abs(t.durationMs - 2000) < 80,
+              std::string("tags: ") + w.name + " -> " + t.format + " " + std::to_string(t.bits) + "-bit " + std::to_string(t.durationMs) + " ms" + t.error,
+              (double) t.durationMs);
+    }
+    const TagInfo d = readTags(writeDsf(1.0));
+    check(d.ok && d.format == "DSF DSD64" && d.sampleRate == 2822400 && d.bits == 1 && std::abs(d.durationMs - 1000) < 20,
+          "tags: DSF -> " + d.format + " " + std::to_string(d.sampleRate) + " Hz, " + std::to_string(d.durationMs) + " ms" + d.error, (double) d.durationMs);
+    const std::vector<uint8_t> png = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n', 1, 2, 3, 4, 5, 6, 7, 8};
+    const std::string tagged = writeTaggedMp3(png);
+    const TagInfo m = readTags(tagged);
+    check(m.ok && m.title == "Hoppípolla" && m.artist == "Sigur Rós" && m.album == "Takk..." && m.albumArtist == "Sigur Rós (album)",
+          "tags: ID3 title/artist/album/album artist (UTF-8): " + m.title + " / " + m.artist + " / " + m.album + " / " + m.albumArtist);
+    check(m.track == 3 && m.disc == 1 && m.year == 2005 && m.hasCover, "tags: track 3/12 -> 3, disc 1/2 -> 1, year, has a cover");
+    check(readCover(tagged) == png, "tags: the cover's bytes come back unchanged");
+    check(readCover(asset("clip16.flac")).empty() && !readTags("/nonexistent.flac").ok, "tags: no cover / missing file handled");
+    check(parseLeadingNumber("03") == 3 && parseLeadingNumber("3/12") == 3 && parseLeadingNumber(" 7 ") == 7 && parseLeadingNumber("A1") == 0 &&
+          parseLeadingNumber("") == 0 && parseLeadingNumber("2x") == 0, "tags: number parsing matches Android's");
+}
+
 int main() {
     testLossless("clip16.flac", "FLAC", 16, kHash16);
     testLossless("clip24.flac", "FLAC", 24, kHash24);
@@ -229,6 +356,8 @@ int main() {
     testLossy("clip.m4a", "AAC");
     testDsd();
     testPlayer();
+    testGapless();
+    testTags();
     std::printf(failures ? "%d desktop core test(s) FAILED\n" : "desktop core tests passed\n", failures);
     return failures ? 1 : 0;
 }

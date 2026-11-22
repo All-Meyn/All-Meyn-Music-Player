@@ -38,8 +38,10 @@ data class TrackInfo(
     }
 
     companion object {
-        fun from(file: File, f: Array<String>): TrackInfo? {
-            if (f.size != 9) return null
+        /** From the engine's playerInfo(); the file is its last field. */
+        fun from(f: Array<String>): TrackInfo? {
+            if (f.size != 10) return null
+            val file = File(f[9])
             return TrackInfo(
                 file = file, codec = f[0], sampleRate = f[1].toIntOrNull() ?: 0, channels = f[2].toIntOrNull() ?: 0,
                 bits = f[3].toIntOrNull() ?: 0, totalFrames = f[4].toLongOrNull() ?: 0,

@@ -46,6 +46,12 @@ class NativeEngineTest {
                 assertTrue(listOf("output", "device").any { err.contains(it, ignoreCase = true) }, "${f.name}: source failed: $err")
             }
         }
+        // Library tags through the DLL (and the field layout the scanner expects).
+        val flacTags = com.allmeyn.desktop.library.FileTags.from(NativeEngine.readTags(flac.absolutePath))
+        assertTrue(flacTags != null && flacTags.format == "FLAC" && flacTags.bits == 16 && flacTags.durationMs in 1950..2050, "$flacTags")
+        val dsfTags = com.allmeyn.desktop.library.FileTags.from(NativeEngine.readTags(dsf.absolutePath))
+        assertTrue(dsfTags != null && dsfTags.format == "DSF DSD64" && dsfTags.sampleRate == 2822400, "$dsfTags")
+        assertTrue(NativeEngine.readCover(flac.absolutePath) == null)
         val missing = NativeEngine.playerOpen(File(dir, "nope.flac").absolutePath)
         assertTrue(missing != null && !missing.contains("output", ignoreCase = true), "missing file: $missing")
         dir.deleteRecursively()

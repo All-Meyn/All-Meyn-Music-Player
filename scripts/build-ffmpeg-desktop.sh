@@ -26,7 +26,8 @@ fi
 JOBS="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)"
 
 # Everything off, then only what playing music files needs. No GPL components (no --enable-gpl).
-DEMUXERS=flac,mov,mp3,ogg,wav,w64,aiff,ape,wv,aac
+# dsf,iff: tags and cover art of DSD files only (our own decoder, dsd.c, plays them)
+DEMUXERS=flac,mov,mp3,ogg,wav,w64,aiff,ape,wv,aac,dsf,iff
 DECODERS=flac,alac,mp3,mp3float,aac,vorbis,opus,ape,wavpack,pcm_s16le,pcm_s16be,pcm_s24le,pcm_s24be,pcm_s32le,pcm_s32be,pcm_f32le,pcm_f32be,pcm_f64le,pcm_u8,pcm_mulaw,pcm_alaw
 PARSERS=flac,mpegaudio,aac,vorbis,opus
 
