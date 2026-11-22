@@ -1,6 +1,7 @@
 package com.allmeyn.player.ui
 
 import android.content.Context
+import android.provider.Settings
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
@@ -14,18 +15,30 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableFloatState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameMillis
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlin.math.ceil
+import kotlin.math.hypot
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.shape.RoundedCornerShape
 
@@ -86,7 +99,7 @@ private fun decodeAtLeast(path: String, px: Int): Bitmap? {
  * [strength] 0–100 (Settings → Appearance): how much of the cover shows through the scrim; 0 = none.
  */
 @Composable
-fun ArtBackdrop(path: String, strength: Int, modifier: Modifier = Modifier) {
+fun ArtBackdrop(path: String, strength: Int, playing: Boolean, modifier: Modifier = Modifier) {
     val blurred by produceState(initialValue = path.takeIf { it.isNotEmpty() }?.let { BackdropMemory.cache.get(it) }, path) {
         if (path.isEmpty()) { value = null; return@produceState }
         value = BackdropMemory.cache.get(path) ?: withContext(Dispatchers.IO) {
@@ -95,17 +108,70 @@ fun ArtBackdrop(path: String, strength: Int, modifier: Modifier = Modifier) {
     }
     if (strength <= 0) return
     val scrim = MaterialTheme.colorScheme.surface.copy(alpha = 1f - strength.coerceAtMost(100) / 100f)
+    val spin = rememberBackdropSpin(playing)
     Crossfade(targetState = blurred, animationSpec = tween(600), modifier = modifier.fillMaxSize(), label = "backdrop") { b ->
         if (b != null) {
             Box(Modifier.fillMaxSize()) {
                 Image(
                     b.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop,
-                    filterQuality = FilterQuality.High, modifier = Modifier.fillMaxSize(),
+                    filterQuality = FilterQuality.High,
+                    modifier = Modifier
+                        .coverWhenRotated()
+                        // Read in the draw phase only: turning never recomposes anything.
+                        .graphicsLayer { rotationZ = spin.floatValue },
                 )
                 Box(Modifier.fillMaxSize().background(scrim))
             }
         }
     }
+}
+
+/** One clockwise turn of the background takes this long. */
+const val BACKDROP_SPIN_PERIOD_MS = 60_000L
+
+/** The background's angle (degrees, clockwise, 0..360) after turning [elapsedMs] more from [degrees]. */
+fun advanceBackdropSpin(degrees: Float, elapsedMs: Long): Float =
+    ((degrees + elapsedMs.coerceAtLeast(0) * 360f / BACKDROP_SPIN_PERIOD_MS) % 360f)
+
+/**
+ * The slowly turning angle: it turns only while music [playing], and holds where it is when
+ * playback pauses or stops (resuming carries on from there). Updated about 30 times a second, not
+ * at the display's rate: on a blur this soft the steps can't be seen, and every update makes the
+ * glass record the screen again (the library's advice is to quantise slow animations). Driven by
+ * frames, so it also stops while the app isn't visible; stays still with "Remove animations".
+ */
+@Composable
+private fun rememberBackdropSpin(playing: Boolean): MutableFloatState {
+    val context = LocalContext.current
+    val angle = remember { mutableFloatStateOf(0f) }
+    val animate = remember {
+        Settings.Global.getFloat(context.contentResolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) > 0f
+    }
+    if (animate && playing) {
+        LaunchedEffect(Unit) {
+            var last = withFrameMillis { it }
+            while (true) {
+                withFrameMillis { now ->
+                    angle.floatValue = advanceBackdropSpin(angle.floatValue, now - last)
+                    last = now
+                }
+                delay(33)
+            }
+        }
+    }
+    return angle
+}
+
+/**
+ * Lays the image out as a square as wide as the screen's diagonal, centred, so that turned to any
+ * angle it still covers every corner.
+ */
+private fun Modifier.coverWhenRotated() = layout { measurable, constraints ->
+    val w = constraints.maxWidth
+    val h = constraints.maxHeight
+    val side = ceil(hypot(w.toDouble(), h.toDouble())).toInt()
+    val placeable = measurable.measure(Constraints.fixed(side, side))
+    layout(w, h) { placeable.place((w - side) / 2, (h - side) / 2) }
 }
 
 /** Settings → Appearance → Background art, 0–100 %. Its own prefs file; nothing else reads it. */
