@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -33,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.allmeyn.desktop.engine.DspStore
@@ -244,21 +246,22 @@ private fun BandMeters(values: FloatArray?, minDb: Float, maxDb: Float) {
     }
 }
 
-/** A bar from 0 dB towards the gain (right = boost, left = cut). */
+/** One bar per meter: down (yellow) / up (red) gain in dB, as on Android and Tetra-Expand's meters. */
 @Composable
 private fun GainMeter(name: String, db: Float, minDb: Float, maxDb: Float) {
-    Column {
-        Text("$name ${signed((db * 10).roundToInt() / 10f)} dB", style = MaterialTheme.typography.labelSmall)
-        Box(Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)).background(MaterialTheme.colorScheme.surfaceContainerHighest)) {
-            val zero = -minDb / (maxDb - minDb)
-            val at = ((db - minDb) / (maxDb - minDb)).coerceIn(0f, 1f)
-            val start = minOf(zero, at)
-            val width = kotlin.math.abs(at - zero)
-            if (width > 0f) Row(Modifier.fillMaxSize()) {
-                if (start > 0f) Box(Modifier.weight(start).fillMaxHeight())
-                Box(Modifier.weight(width).fillMaxHeight().background(MaterialTheme.colorScheme.primary))
-                if (1f - start - width > 0f) Box(Modifier.weight(1f - start - width).fillMaxHeight())
-            }
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+        val up = db > 0f
+        val frac = if (up) (db / maxDb).coerceIn(0f, 1f) else if (minDb < 0f) (db / minDb).coerceIn(0f, 1f) else 0f
+        Box(
+            Modifier.fillMaxWidth().height(8.dp).clip(RoundedCornerShape(4.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        ) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(frac).background(if (up) MeterUp else MeterDown))
         }
+        Spacer(Modifier.height(2.dp))
+        Text("$name ${signed((db * 10).roundToInt() / 10f)}", style = MaterialTheme.typography.labelSmall)
     }
 }
+
+private val MeterUp = Color(0xFFE53935)    // boost (red), the Android colours
+private val MeterDown = Color(0xFFFDD835)  // cut (yellow)
