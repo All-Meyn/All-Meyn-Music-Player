@@ -63,6 +63,11 @@ JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_setParams(JNIEnv* e
     chainOf(h)->setParams(p);
 }
 
+/** The current song's source: lossy (with a bitrate-based cutoff guess in Hz, 0 = none) or not. */
+JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_setSource(JNIEnv*, jclass, jlong h, jboolean lossy, jfloat priorCutoffHz) {
+    if (h != 0) chainOf(h)->setSource(lossy == JNI_TRUE, priorCutoffHz);
+}
+
 /**
  * Processes [frames] interleaved float frames at byte [offset] of the direct buffer, in place, and
  * copies the meters into [meters]. False if the buffer isn't direct (the caller copies instead).

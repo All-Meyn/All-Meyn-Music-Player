@@ -61,6 +61,64 @@ static double bandRespDb(double hz, int b) {
     return 20 * std::log10(mag);
 }
 
+#include <complex>
+#include <functional>
+
+/** In-place radix-2 FFT (inverse when inv). */
+static void fft(std::vector<std::complex<double>>& a, bool inv) {
+    const size_t n = a.size();
+    for (size_t i = 1, j = 0; i < n; i++) {
+        size_t bit = n >> 1;
+        for (; j & bit; bit >>= 1) j ^= bit;
+        j ^= bit;
+        if (i < j) std::swap(a[i], a[j]);
+    }
+    for (size_t len = 2; len <= n; len <<= 1) {
+        const double ang = 2 * PI / len * (inv ? 1 : -1);
+        const std::complex<double> wl(std::cos(ang), std::sin(ang));
+        for (size_t i = 0; i < n; i += len) {
+            std::complex<double> w(1);
+            for (size_t k = 0; k < len / 2; k++) {
+                const auto u = a[i + k], v = a[i + k + len / 2] * w;
+                a[i + k] = u + v;
+                a[i + k + len / 2] = u - v;
+                w *= wl;
+            }
+        }
+    }
+}
+
+/**
+ * Stereo (identical channels) noise whose amplitude spectrum follows [shape](Hz), ~0.1 RMS, plus
+ * a -100 dBFS white floor: Hann-windowed random-phase frames, 50 % overlap-add.
+ */
+static std::vector<float> shapedNoise(const std::function<double(double)>& shape, double sr, double seconds, unsigned seed) {
+    const int n = 8192, hop = n / 2, total = (int) (sr * seconds);
+    std::vector<double> mono(total + n, 0.0);
+    unsigned s = seed * 2654435761u + 1;
+    auto rnd = [&] { s = s * 1664525u + 1013904223u; return (s >> 8) / 16777216.0; };
+    std::vector<std::complex<double>> spec(n);
+    for (int start = 0; start < total; start += hop) {
+        for (int k = 0; k < n; k++) spec[k] = 0;
+        for (int k = 1; k < n / 2; k++) {
+            const double m = shape(k * sr / n), ph = 2 * PI * rnd();
+            spec[k] = std::polar(m, ph);
+            spec[n - k] = std::conj(spec[k]);
+        }
+        fft(spec, true);
+        for (int i = 0; i < n; i++) mono[start + i] += spec[i].real() * (0.5 - 0.5 * std::cos(2 * PI * i / n));
+    }
+    double rms = 0;
+    for (int i = 0; i < total; i++) rms += mono[i] * mono[i];
+    rms = std::sqrt(rms / total);
+    std::vector<float> v(2 * (size_t) total);
+    for (int i = 0; i < total; i++) {
+        const float x = (float) (0.1 * mono[i] / rms + 1e-5 * (2 * rnd() - 1) * 1.732);
+        v[2 * i] = v[2 * i + 1] = x;
+    }
+    return v;
+}
+
 int main() {
     // 1. Everything off: bit-exact pass-through.
     {
@@ -346,6 +404,68 @@ int main() {
             std::snprintf(label, sizeof label, "vocal 100 %% stable at %.1f kHz, %d ch", rate / 1000, ch);
             check(ok, label, 0);
         }
+    }
+
+    // 15. Lossy cutoff detection and Air on lossy sources (44.1 kHz, noise-like "music").
+    {
+        const double sr = 44100.0;
+        auto tone = [](double f) { return f > 10.0 ? 1.0 / std::sqrt(f) : 0.0; };  // pinkish
+        auto lossy = [&](double cut) { return [=](double f) { return f < cut ? tone(f) : 0.0; }; };
+        auto natural = [&](double f) { return f > 8000 ? tone(f) * std::pow(8000 / f, 2.0) : tone(f); };  // -12 dB/oct
+        auto steep = [&](double f) { return f > 12000 ? tone(f) * std::pow(10.0, -(f - 12000) / 1000 * 10 / 20) : tone(f); };  // -10 dB/kHz
+        Params p; p.vocalOn = true; p.presencePercent = p.detailPercent = 0; p.airPercent = 0;
+        auto feed = [&](Chain& c, const std::vector<float>& v) {
+            std::vector<float> w = v;
+            for (size_t i = 0; i < w.size(); i += 2 * 512) c.process(w.data() + i, (int) std::min<size_t>(512, (w.size() - i) / 2));
+            return w;
+        };
+        auto cutoffAfter = [&](auto shape, bool isLossy, float prior, double seconds) {
+            Chain c(sr, 2); c.setParams(p); c.setSource(isLossy, prior);
+            feed(c, shapedNoise(shape, sr, seconds, 11));
+            return (double) c.meters().airCutoffHz;
+        };
+
+        Chain c(sr, 2); c.setParams(p); c.setSource(true, 16000);
+        feed(c, shapedNoise(lossy(15300), sr, 0.5, 1));
+        check(c.meters().airCutoffHz == 16000, "cutoff: lossy file starts from its bitrate guess (Hz)", c.meters().airCutoffHz);
+        feed(c, shapedNoise(lossy(15300), sr, 3.5, 2));
+        const double found = c.meters().airCutoffHz;
+        check(found >= 15000 && found <= 16000, "cutoff: lossy cliff at 15.3 kHz found (Hz)", found);
+        feed(c, std::vector<float>((size_t) (2 * sr * 10), 0.0f));
+        check(c.meters().airCutoffHz == found, "cutoff: 10 s of silence keeps the result (Hz)", c.meters().airCutoffHz);
+        c.setSource(false, 0);
+        feed(c, std::vector<float>(1024, 0.0f));
+        check(c.meters().airCutoffHz == 0, "cutoff: a new lossless song starts as full range (Hz)", c.meters().airCutoffHz);
+
+        check(cutoffAfter(lossy(16300), false, 0, 3.0) == 0, "cutoff: lossless file isn't judged before 5 s of music", cutoffAfter(lossy(16300), false, 0, 3.0));
+        const double transcode = cutoffAfter(lossy(16300), false, 0, 8.0);
+        check(transcode >= 16000 && transcode <= 17000, "cutoff: lossless file made from an MP3 caught (Hz)", transcode);
+        check(cutoffAfter(natural, false, 0, 8.0) == 0, "cutoff: natural -12 dB/oct treble = full range", cutoffAfter(natural, false, 0, 8.0));
+        check(cutoffAfter(steep, false, 0, 8.0) == 0, "cutoff: steep -10 dB/kHz treble (lossless) = full range", cutoffAfter(steep, false, 0, 8.0));
+        check(cutoffAfter(steep, true, 16000, 8.0) == 0, "cutoff: lossy file without a cliff = full range", cutoffAfter(steep, true, 16000, 8.0));
+        const double low = cutoffAfter(lossy(11300), true, 14000, 4.0);
+        check(low >= 11000 && low <= 12000, "cutoff: low-bitrate cliff at 11.3 kHz found (Hz)", low);
+
+        // Air on a lossy song fills the empty band above its cutoff.
+        auto in = shapedNoise(lossy(15300), sr, 4.0, 3);
+        Params a = p; a.airPercent = 100;
+        Chain ca(sr, 2); ca.setParams(a); ca.setSource(true, 15500);
+        auto out = feed(ca, in);
+        auto bandDb = [&](const std::vector<float>& v, double f) {
+            const int n = 8192, from = (int) (3.0 * sr);
+            double re = 0, im = 0;
+            for (int i = 0; i < n; i++) {
+                const double w = 0.5 - 0.5 * std::cos(2 * PI * i / n);
+                re += w * v[2 * (from + i)] * std::cos(2 * PI * f * i / sr);
+                im += w * v[2 * (from + i)] * std::sin(2 * PI * f * i / sr);
+            }
+            return 10 * std::log10(re * re + im * im + 1e-30);
+        };
+        double gain = 0;
+        for (double f : {16500.0, 17500.0, 18500.0}) gain += (bandDb(out, f) - bandDb(in, f)) / 3;
+        check(gain > 20, "air on lossy: band above the cutoff filled (dB more than input)", gain);
+        const double rel = bandDb(out, 17500) - bandDb(in, 14000);
+        check(rel > -35 && rel < -5, "air on lossy: fill sits below the music under the cutoff (dB)", rel);
     }
 
     std::printf(failures ? "%d DSP test(s) FAILED\n" : "DSP tests passed\n", failures);

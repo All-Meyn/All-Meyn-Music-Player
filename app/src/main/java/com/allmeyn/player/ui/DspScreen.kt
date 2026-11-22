@@ -139,10 +139,20 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
                 LabeledSlider("Air", "${p.airPercent.roundToInt()} %", p.airPercent, 0f..100f, 1f) { v -> onChange { it.copy(airPercent = v) } }
                 Text(
                     "Works on the centre of the mix, where vocals sit. Presence: crisper consonants and attacks. " +
-                        "Detail: lifts quiet passages a little. Air: adds sparkle above 9 kHz.",
+                        "Detail: lifts quiet passages a little. Air: adds sparkle above 9 kHz, and on " +
+                        "MP3/AAC fills in the treble the encoder cut off.",
                     style = MaterialTheme.typography.bodySmall,
                 )
                 GainMeter("Vocal", meters?.vocalDb ?: 0f, -20f, 6f)
+                val cutoff = meters?.airCutoffHz
+                if (p.enabled && p.vocalOn && cutoff != null) {
+                    Text(
+                        if (cutoff > 0f) "Air source: lossy, treble ends near ${"%.1f".format(cutoff / 1000f)} kHz (Air fills above it)"
+                        else "Air source: full range",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
             }
         }
         item(key = "output") {

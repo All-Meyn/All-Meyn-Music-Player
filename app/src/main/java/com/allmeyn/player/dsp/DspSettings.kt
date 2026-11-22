@@ -98,9 +98,11 @@ data class DspMeters(
     val impactDb: FloatArray = FloatArray(4),
     val outputPeak: Float = 0f,
     val vocalDb: Float = 0f,
+    /** Treble cutoff Air is working with; 0 = full-range source. */
+    val airCutoffHz: Float = 0f,
 ) {
     companion object {
-        fun from(m: FloatArray) = DspMeters(m.copyOfRange(0, 4), m[4], m.copyOfRange(5, 9), m[9], m[10])
+        fun from(m: FloatArray) = DspMeters(m.copyOfRange(0, 4), m[4], m.copyOfRange(5, 9), m[9], m[10], m[11])
     }
 }
 

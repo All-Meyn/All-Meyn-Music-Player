@@ -66,6 +66,7 @@ class DspParamsTest {
         assertArrayEquals(floatArrayOf(5f, 6f, 7f, 8f), m.impactDb, 0f)
         assertEquals(9f, m.outputPeak)
         assertEquals(10f, m.vocalDb)
+        assertEquals(11f, m.airCutoffHz)
     }
 
     // These labels once used a format string containing "% (", which crashed the DSP screen.

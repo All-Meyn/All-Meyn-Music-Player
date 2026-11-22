@@ -11,6 +11,7 @@ import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.playback.ReplayGain
 import com.allmeyn.player.plugin.PcmFormat
 import com.allmeyn.player.plugin.PluginHost
+import com.allmeyn.player.dsp.AirSource
 import com.allmeyn.player.dsp.DspMeters
 import com.allmeyn.player.dsp.DspSettings
 import com.allmeyn.player.dsp.NativeDsp
@@ -64,6 +65,7 @@ class CaptureAudioSink(
     private var chainRate = 0
     private var chainChannels = 0
     private var paramsVersion = -1
+    private var sourceVersion = -1
     private var convertBuffer: ByteBuffer? = null  // int -> float conversion (direct, little-endian)
     private var pendingOut: ByteBuffer? = null     // converted buffer still being fed to the sink
     private val meterValues = FloatArray(NativeDsp.METER_COUNT)
@@ -149,6 +151,11 @@ class CaptureAudioSink(
             paramsVersion = DspSettings.version
             NativeDsp.setParams(chain, params.toNativeValues(), params.toNativeOrder())
         }
+        if (sourceVersion != AirSource.version) {
+            sourceVersion = AirSource.version
+            val hint = AirSource.hint
+            NativeDsp.setSource(chain, hint.lossy, hint.priorCutoffHz)
+        }
         val target = if (floatSink) toFloat(buffer).also { pendingOut = it } else buffer
         val frames = target.remaining() / (4 * src.channelCount)
         if (frames > 0 && !NativeDsp.process(chain, target, target.position(), frames, meterValues)) {
@@ -168,6 +175,7 @@ class CaptureAudioSink(
         chainRate = rate
         chainChannels = channels
         paramsVersion = -1
+        sourceVersion = -1
         return chain != 0L
     }
 
