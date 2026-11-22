@@ -1,12 +1,15 @@
 // JNI for the desktop engine: com.allmeyn.desktop.engine.NativeEngine.
-// Stage W1: reports what the engine was built with (FFmpeg version and decoders) and lists the
-// Windows audio output devices (WASAPI), so the build chain and device access can be checked.
+// What the engine was built with, the Windows outputs, and the player (one song at a time).
 #include <jni.h>
 
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
 #include "audio_devices.h"
+#include "core/player.h"
+#include "wasapi_output.h"
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -16,6 +19,21 @@ extern "C" {
 namespace {
 
 jstring toJava(JNIEnv* env, const std::string& s) { return env->NewStringUTF(s.c_str()); }
+
+std::string fromJava(JNIEnv* env, jstring s) {
+    if (!s) return {};
+    const char* c = env->GetStringUTFChars(s, nullptr);
+    std::string out = c ? c : "";
+    if (c) env->ReleaseStringUTFChars(s, c);
+    return out;
+}
+
+// One player for the app; JNI calls may come from different JVM threads, so they're serialised.
+std::mutex g_lock;
+allmeyn::Player& player() {
+    static allmeyn::Player p([] { return std::make_unique<allmeyn::WasapiOutput>(); });
+    return p;
+}
 
 jobjectArray toJava(JNIEnv* env, const std::vector<std::string>& items) {
     jclass stringClass = env->FindClass("java/lang/String");
@@ -46,6 +64,7 @@ JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_ffmp
     }
     it = nullptr;
     while (const AVInputFormat* f = av_demuxer_iterate(&it)) names.push_back(std::string("demuxer:") + f->name);
+    names.push_back("decoder:allmeyn_dsd");  // our DSF/DFF decoder (the Android app's dsd.c)
     return toJava(env, names);
 }
 
@@ -60,6 +79,62 @@ JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_outp
                        "\t" + std::to_string(d.mixBits) + "\t" + std::to_string(d.mixChannels));
     }
     return toJava(env, rows);
+}
+
+// ---- player ---------------------------------------------------------------------------------
+
+/** Opens a song (paused at the start). Returns null, or why it can't be played. */
+JNIEXPORT jstring JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerOpen(JNIEnv* env, jclass, jstring path) {
+    std::lock_guard<std::mutex> g(g_lock);
+    std::string error;
+    if (player().open(fromJava(env, path), error)) return nullptr;
+    return toJava(env, error.empty() ? std::string("Can't play this file") : error);
+}
+
+/** [codec, sampleRate, channels, bits, totalFrames, title, artist, album, output]. */
+JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerInfo(JNIEnv* env, jclass) {
+    std::lock_guard<std::mutex> g(g_lock);
+    const auto i = player().info();
+    return toJava(env, std::vector<std::string>{
+        i.codec, std::to_string(i.sampleRate), std::to_string(i.channels), std::to_string(i.bitsPerSample),
+        std::to_string(i.totalFrames), i.title, i.artist, i.album, player().outputDescription()});
+}
+
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerPlay(JNIEnv*, jclass) {
+    std::lock_guard<std::mutex> g(g_lock);
+    player().play();
+}
+
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerPause(JNIEnv*, jclass) {
+    std::lock_guard<std::mutex> g(g_lock);
+    player().pause();
+}
+
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSeek(JNIEnv*, jclass, jlong frame) {
+    std::lock_guard<std::mutex> g(g_lock);
+    player().seek(frame);
+}
+
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerClose(JNIEnv*, jclass) {
+    std::lock_guard<std::mutex> g(g_lock);
+    player().close();
+}
+
+/** Frame being heard. */
+JNIEXPORT jlong JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerPosition(JNIEnv*, jclass) {
+    std::lock_guard<std::mutex> g(g_lock);
+    return player().positionFrames();
+}
+
+/** 0 idle, 1 playing, 2 paused, 3 ended, 4 error. */
+JNIEXPORT jint JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerState(JNIEnv*, jclass) {
+    std::lock_guard<std::mutex> g(g_lock);
+    return (jint) player().state();
+}
+
+JNIEXPORT jstring JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerError(JNIEnv* env, jclass) {
+    std::lock_guard<std::mutex> g(g_lock);
+    return toJava(env, player().error());
 }
 
 }  // extern "C"

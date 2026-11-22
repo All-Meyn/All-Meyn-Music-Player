@@ -39,11 +39,11 @@ import kotlinx.coroutines.withContext
 private val LIBRARY_SECTIONS = listOf("Albums", "Artists", "Songs", "Playlists", "Folders")
 
 /**
- * Stage W1: the shell of the desktop app. The library sections are placeholders (W3); the main
- * area shows what the native engine was built with and which outputs Windows offers.
+ * The desktop app's main screen. The library sections are placeholders (W3); the main area plays
+ * a song (W2), shows what the native engine was built with and which outputs Windows offers.
  */
 @Composable
-fun HomeScreen() {
+fun HomeScreen(player: PlayerController, onOpen: () -> Unit) {
     Row(Modifier.fillMaxSize()) {
         Sidebar()
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -52,6 +52,7 @@ fun HomeScreen() {
                 verticalArrangement = Arrangement.spacedBy(20.dp),
             ) {
                 Header()
+                NowPlayingCard(player, onOpen)
                 EngineCard()
                 OutputsCard()
             }
@@ -111,7 +112,7 @@ private fun EngineCard() {
             is NativeEngine.Status.Ready -> {
                 Line("Decoder", "FFmpeg ${s.ffmpeg}")
                 Line("Formats", s.formats.joinToString(", "))
-                Line("Coming next", "DSD (DSF/DFF), playback, bit-perfect output")
+                Line("Output", "Shared mode for now; bit-perfect (exclusive / ASIO) comes in a later stage")
             }
             is NativeEngine.Status.Unavailable -> Text(
                 "The audio engine didn't load: ${s.reason}",

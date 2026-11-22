@@ -7,7 +7,8 @@ on:
       - "app/src/main/cpp/**"
       - "app/src/main/res/drawable/ic_brand_mark.xml"
       - "branding/**"
-      - "scripts/build-ffmpeg-windows.sh"
+      - "scripts/build-ffmpeg-desktop.sh"
+      - "app/src/androidTest/assets/**"
       - "gradle/**"
       - ".github/workflows/desktop.yml"
   pull_request:
@@ -16,7 +17,8 @@ on:
       - "app/src/main/cpp/**"
       - "app/src/main/res/drawable/ic_brand_mark.xml"
       - "branding/**"
-      - "scripts/build-ffmpeg-windows.sh"
+      - "scripts/build-ffmpeg-desktop.sh"
+      - "app/src/androidTest/assets/**"
       - "gradle/**"
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
@@ -41,16 +43,31 @@ jobs:
       - name: Install MinGW-w64
         run: sudo apt-get update -q && sudo apt-get install -y -q g++-mingw-w64-x86-64-posix gcc-mingw-w64-x86-64-posix
 
-      - name: Cache FFmpeg (Windows)
+      - name: Cache FFmpeg (Windows + Linux)
         id: ffmpeg-cache
         uses: actions/cache@v5
         with:
           path: desktop/native/ffmpeg
-          key: ffmpeg-windows-${{ hashFiles('scripts/build-ffmpeg-windows.sh') }}
+          key: ffmpeg-desktop-${{ hashFiles('scripts/build-ffmpeg-desktop.sh') }}
 
-      - name: Build FFmpeg (Windows)
+      - name: Build FFmpeg (Windows + Linux)
         if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
-        run: scripts/build-ffmpeg-windows.sh
+        run: |
+          scripts/build-ffmpeg-desktop.sh windows
+          scripts/build-ffmpeg-desktop.sh linux
+
+      # Sources and player on Linux with the same FFmpeg: lossless clips bit-exact (the Android test's
+      # hashes), sample-accurate seeks, DSD, the player's threads (ASan/UBSan, then TSan).
+      - name: Engine core tests (Linux)
+        run: |
+          for san in "address,undefined" thread; do
+            dir="build/desktop-tests-${san%%,*}"
+            cmake -S desktop/native -B "$dir" -DALLMEYN_HOST_TESTS=ON -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+              -DCMAKE_C_FLAGS="-fsanitize=$san" -DCMAKE_CXX_FLAGS="-fsanitize=$san -fno-omit-frame-pointer" \
+              -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=$san"
+            cmake --build "$dir" -j
+            "$dir/desktop_core_test"
+          done
 
       - name: Build the engine DLL
         run: |
@@ -64,7 +81,7 @@ jobs:
           deps=$(x86_64-w64-mingw32-objdump -p build/desktop-native/allmeyn_desktop.dll | awk '/DLL Name/ {print tolower($3)}' | sort -u | tr '\n' ' ')
           echo "imports: $deps"
           for d in $deps; do
-            case "$d" in kernel32.dll|msvcrt.dll|ole32.dll|bcrypt.dll|user32.dll|advapi32.dll|avrt.dll) ;;
+            case "$d" in kernel32.dll|msvcrt.dll|ole32.dll|bcrypt.dll|user32.dll|advapi32.dll|avrt.dll|ksuser.dll) ;;
               *) echo "unexpected DLL dependency: $d"; exit 1 ;; esac
           done
           x86_64-w64-mingw32-objdump -p build/desktop-native/allmeyn_desktop.dll | grep -q Java_com_allmeyn_desktop_engine_NativeEngine_ffmpegVersion
@@ -104,6 +121,7 @@ jobs:
           grep -o '<testsuite[^>]*>' "$xml"
           grep -q 'skipped="0"' "$xml" || { echo "NativeEngineTest was skipped: the DLL wasn't loaded"; exit 1; }
           grep -o 'Outputs:[^<]*' "$xml" || true
+          grep -oE '[^>]*\.(flac|dsf): [^<]*' "$xml" || true
 
       # The packaged app (bundled Java runtime + DLL) must start and keep running: catches a runtime
       # module or resource missing from the distribution, which unit tests can't see.

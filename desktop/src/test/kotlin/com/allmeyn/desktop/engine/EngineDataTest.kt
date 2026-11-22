@@ -30,8 +30,8 @@ class EngineDataTest {
     @Test fun summarizesFormatsInOrderWithoutRepeats() {
         val got = Formats.summarize(listOf(
             "decoder:mp3float", "decoder:flac", "decoder:mp3", "decoder:pcm_s24le", "decoder:pcm_s16be",
-            "decoder:opus", "decoder:wavpack", "demuxer:ogg", "decoder:unknown",
+            "decoder:opus", "decoder:wavpack", "demuxer:ogg", "decoder:unknown", "decoder:allmeyn_dsd",
         ))
-        assertEquals(listOf("FLAC", "WavPack", "MP3", "Opus", "WAV / AIFF"), got)
+        assertEquals(listOf("FLAC", "WavPack", "MP3", "Opus", "WAV / AIFF", "DSD (DSF/DFF)"), got)
     }
 }

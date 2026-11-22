@@ -26,6 +26,7 @@ tasks.processResources {
 tasks.test {
     useJUnitPlatform()
     systemProperty("allmeyn.engineDir", layout.projectDirectory.dir("resources/windows-x64").asFile.absolutePath)
+    systemProperty("allmeyn.assetsDir", layout.projectDirectory.dir("../app/src/androidTest/assets").asFile.absolutePath)
 }
 
 compose.desktop {
