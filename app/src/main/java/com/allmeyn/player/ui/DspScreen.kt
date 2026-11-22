@@ -59,7 +59,9 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
     val p = params
     val listState = rememberLazyListState()
     // The processor order is the draggable part of the list; everything else is fixed items.
-    val reorder = rememberReorderState(p.order, listState) { it.name }
+    // Vocal & Detail Restoration is pinned first, so only the others are draggable.
+    val movable = remember(p.order) { p.order.filter { it != DspProcessor.VOCAL } }
+    val reorder = rememberReorderState(movable, listState) { it.name }
 
     LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = belowBars(16.dp, 16.dp, 16.dp, 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item(key = "master") {
@@ -77,14 +79,29 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
         item(key = "chainTitle") {
             Text("Chain (drag to reorder)", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
         }
+        item(key = "vocalPinned") {
+            PanelCard(Modifier.fillMaxWidth()) {
+                Row(Modifier.padding(start = 16.dp, end = 12.dp).height(48.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("1", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(24.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(DspProcessor.VOCAL.label, fontWeight = FontWeight.Medium)
+                        Text("Always first", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(checked = p.vocalOn, onCheckedChange = { v -> onChange { it.copy(vocalOn = v) } }, enabled = p.enabled)
+                }
+            }
+        }
         itemsIndexed(reorder.rows, key = { _, proc -> proc.name }) { i, proc ->
             PanelCard(reorderRow(reorder, proc).fillMaxWidth()) {
                 Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("${i + 1}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(24.dp))
+                    Text("${i + 2}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(24.dp))
                     Text(proc.label, Modifier.weight(1f), fontWeight = FontWeight.Medium)
                     Switch(checked = isOn(p, proc), onCheckedChange = { v -> onChange { setOn(it, proc, v) } }, enabled = p.enabled)
                     DragHandle(reorder, proc) { from, to ->
-                        onChange { cur -> cur.copy(order = cur.order.toMutableList().apply { add(to, removeAt(from)) }) }
+                        onChange { cur ->
+                            val rest = cur.order.filter { it != DspProcessor.VOCAL }.toMutableList().apply { add(to, removeAt(from)) }
+                            cur.copy(order = listOf(DspProcessor.VOCAL) + rest)
+                        }
                     }
                 }
             }

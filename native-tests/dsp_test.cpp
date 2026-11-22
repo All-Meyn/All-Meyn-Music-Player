@@ -318,6 +318,18 @@ int main() {
         }
         check(maxStep <= steady * 1.05, "turning vocal restoration on: no step bigger than steady state", maxStep / steady);
     }
+    {
+        // Always first: asking for it last gives the same result as asking for it first.
+        Params a; a.vocalOn = a.companderOn = true; a.expansionPercent = 50; a.presencePercent = 100;
+        a.order[0] = kVocal; a.order[1] = kCompander; a.order[2] = kBass; a.order[3] = kImpact;
+        Params b = a; b.order[0] = kCompander; b.order[1] = kBass; b.order[2] = kImpact; b.order[3] = kVocal;
+        auto burst = sine(1500, -15, 1.0);
+        for (int i = 0; i < (int) (0.5 * SR); i++) burst[2 * i] = burst[2 * i + 1] = 0;
+        auto x = run(a, burst), y = run(b, burst);
+        double diff = 0;
+        for (size_t i = 0; i < x.size(); i++) diff = std::fmax(diff, std::fabs(x[i] - y[i]));
+        check(diff == 0.0, "vocal restoration always runs first, whatever the order", diff);
+    }
     // Stable and finite from 44.1 kHz to 768 kHz, mono too.
     for (double rate : {44100.0, 768000.0}) {
         for (int ch : {1, 2}) {

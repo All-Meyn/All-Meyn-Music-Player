@@ -273,7 +273,12 @@ void Chain::setParams(const Params& p) {
         if (v < 0 || v >= kNumProcessors || seen[v]) { ok = false; break; }
         seen[v] = true;
     }
-    if (ok) for (int i = 0; i < kNumProcessors; i++) order[i] = p.order[i];
+    if (ok) {
+        // Vocal & Detail Restoration first, the others in the given order.
+        int k = 0;
+        order[k++] = kVocal;
+        for (int i = 0; i < kNumProcessors; i++) if (p.order[i] != kVocal) order[k++] = p.order[i];
+    }
 }
 
 float Chain::levelOf(Detector& d, float meanSquareIn) {

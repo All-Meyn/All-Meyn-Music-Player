@@ -35,11 +35,15 @@ data class DspParams(
     val airPercent: Float = 25f,         // 0..100
     val volumeDb: Float = 0f,            // -40..+10
     val softClip: Boolean = false,
-    val order: List<DspProcessor> = DspProcessor.entries.toList(),
+    val order: List<DspProcessor> = listOf(DspProcessor.VOCAL, DspProcessor.COMPANDER, DspProcessor.BASS, DspProcessor.IMPACT),
 ) {
-    /** Clamped to the valid ranges; the order fixed up to contain each processor once. */
+    /**
+     * Clamped to the valid ranges; the order fixed up to contain each processor once, with Vocal &
+     * Detail Restoration always first.
+     */
     fun sanitized(): DspParams {
-        val fixedOrder = (order.distinct() + DspProcessor.entries).distinct()
+        val fixedOrder = listOf(DspProcessor.VOCAL) +
+            (order.distinct() + DspProcessor.entries).distinct().filter { it != DspProcessor.VOCAL }
         return copy(
             expansionPercent = expansionPercent.coerceIn(-50f, 50f),
             transitionDb = transitionDb.coerceIn(-40f, 0f),

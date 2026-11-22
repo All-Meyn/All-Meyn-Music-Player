@@ -49,8 +49,9 @@ struct Params {
     // Output
     float volumeDb = 0.0f;           // -40..+10
     bool  softClip = false;
-    // Processing order of the processors (a permutation of 0..kNumProcessors-1).
-    int   order[kNumProcessors] = {kCompander, kBass, kImpact, kVocal};
+    // Processing order of the processors (a permutation of 0..kNumProcessors-1). Vocal & Detail
+    // Restoration always runs first: setParams moves it to the front whatever order is given.
+    int   order[kNumProcessors] = {kVocal, kCompander, kBass, kImpact};
 };
 
 /** Readings for the UI. */
@@ -185,7 +186,7 @@ private:
     // fresh filters and neutral detectors (unity gain, no false impact), not from stale or silent state.
     bool compFresh = true, bassFresh = true, impFresh = true, vocFresh = true;
 
-    int order[kNumProcessors] = {kCompander, kBass, kImpact, kVocal};
+    int order[kNumProcessors] = {kVocal, kCompander, kBass, kImpact};
     Meters m {};
 };
 

@@ -18,13 +18,20 @@ class DspParamsTest {
         assertEquals(100f, p.presencePercent)
         assertEquals(0f, p.detailPercent)
         assertEquals(100f, p.airPercent)
-        assertEquals(listOf(DspProcessor.IMPACT, DspProcessor.COMPANDER, DspProcessor.BASS, DspProcessor.VOCAL), p.order)
+        assertEquals(listOf(DspProcessor.VOCAL, DspProcessor.IMPACT, DspProcessor.COMPANDER, DspProcessor.BASS), p.order)
     }
 
-    // An order saved before Vocal & Detail Restoration existed loads with it appended last.
-    @Test fun oldSavedOrderGetsVocalAppended() {
+    // An order saved before Vocal & Detail Restoration existed loads with it first, the rest kept.
+    @Test fun oldSavedOrderGetsVocalFirst() {
         val p = DspParams(order = listOf(DspProcessor.BASS, DspProcessor.IMPACT, DspProcessor.COMPANDER)).sanitized()
-        assertEquals(listOf(DspProcessor.BASS, DspProcessor.IMPACT, DspProcessor.COMPANDER, DspProcessor.VOCAL), p.order)
+        assertEquals(listOf(DspProcessor.VOCAL, DspProcessor.BASS, DspProcessor.IMPACT, DspProcessor.COMPANDER), p.order)
+    }
+
+    // Vocal & Detail Restoration is always first, whatever order is asked for.
+    @Test fun vocalAlwaysFirst() {
+        val p = DspParams(order = listOf(DspProcessor.COMPANDER, DspProcessor.VOCAL, DspProcessor.IMPACT, DspProcessor.BASS)).sanitized()
+        assertEquals(listOf(DspProcessor.VOCAL, DspProcessor.COMPANDER, DspProcessor.IMPACT, DspProcessor.BASS), p.order)
+        assertEquals(DspProcessor.VOCAL, DspParams().order.first())
     }
 
     @Test fun processesOnlyWhenOnAndSomethingToDo() {
