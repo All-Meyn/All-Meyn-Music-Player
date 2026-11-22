@@ -34,6 +34,8 @@ public:
      */
     bool setNext(const std::string& utf8Path, std::string& error);
     void clearNext();
+    /** DSD as DoP when the output can take it bit-exact (else PCM). Applies to songs opened next. */
+    void setDopAllowed(bool allowed) { dopAllowed_ = allowed; }
     void play();
     void pause();
     /** Jumps to [frame] of the song being heard (sample-accurate); keeps playing or paused. */
@@ -82,6 +84,8 @@ private:
     std::atomic<bool> sourceEnded_{false};
     std::atomic<int64_t> written_{0};      // frames written to the ring since open/seek
     std::atomic<int> streamRate_{0}, streamChannels_{0};  // the stream's format (fixed per open)
+    std::atomic<bool> streamDop_{false};
+    std::atomic<bool> dopAllowed_{false};
 
     mutable std::mutex nextLock_;
     std::unique_ptr<Source> next_;

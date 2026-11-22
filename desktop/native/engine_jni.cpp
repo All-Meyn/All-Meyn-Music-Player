@@ -32,8 +32,14 @@ std::string fromJava(JNIEnv* env, jstring s) {
 
 // One player for the app; JNI calls may come from different JVM threads, so they're serialised.
 std::mutex g_lock;
+// The output songs are opened on (Settings): device and mode.
+std::mutex g_outputLock;
+allmeyn::WasapiConfig g_output;
 allmeyn::Player& player() {
-    static allmeyn::Player p([] { return std::make_unique<allmeyn::WasapiOutput>(); });
+    static allmeyn::Player p([] {
+        std::lock_guard<std::mutex> g(g_outputLock);
+        return std::make_unique<allmeyn::WasapiOutput>(g_output);
+    });
     return p;
 }
 
@@ -84,6 +90,19 @@ JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_outp
 }
 
 // ---- player ---------------------------------------------------------------------------------
+
+/**
+ * The output for songs opened from now on: [deviceId] (empty = Windows' default), exclusive
+ * (bit-perfect) or shared, and DSD as DoP when the output can take it bit-exact.
+ */
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetOutput(JNIEnv* env, jclass, jstring deviceId, jboolean exclusive, jboolean dop) {
+    {
+        std::lock_guard<std::mutex> g(g_outputLock);
+        g_output.deviceId = fromJava(env, deviceId);
+        g_output.exclusive = exclusive == JNI_TRUE;
+    }
+    player().setDopAllowed(dop == JNI_TRUE && exclusive == JNI_TRUE);
+}
 
 /** Opens a song (paused at the start). Returns null, or why it can't be played. */
 JNIEXPORT jstring JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerOpen(JNIEnv* env, jclass, jstring path) {

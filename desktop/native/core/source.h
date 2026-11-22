@@ -16,6 +16,7 @@ struct SourceInfo {
     std::string codec;        // "FLAC", "DSD64 (DSF)", ...
     std::string title, artist, album;
     std::string path;         // the file (UTF-8)
+    bool dop = false;         // DSD packed as DoP in 24-bit frames: must reach the DAC bit-exact
 };
 
 class Source {
@@ -33,8 +34,11 @@ protected:
     SourceInfo info_;
 };
 
-/** Opens [utf8Path]: DSF/DFF with our DSD decoder (as PCM), everything else with FFmpeg. */
-std::unique_ptr<Source> openSource(const std::string& utf8Path, std::string& error);
+/** Opens [utf8Path]: DSF/DFF with our DSD decoder (as DoP if [dop], else PCM), everything else with FFmpeg. */
+std::unique_ptr<Source> openSource(const std::string& utf8Path, std::string& error, bool dop = false);
+
+/** DSF/DFF (by its first bytes). */
+bool isDsdFile(const std::string& utf8Path);
 
 /** Most channels the engine plays (more is refused rather than silently downmixed). */
 constexpr int kMaxChannels = 8;

@@ -39,11 +39,22 @@ import kotlinx.coroutines.withContext
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.clickable
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
+import com.allmeyn.desktop.engine.OutputSettings
 import com.allmeyn.desktop.library.DesktopLibrary
 
 /** Music folders, the audio engine and the Windows outputs. */
 @Composable
-fun SettingsScreen(library: DesktopLibrary, onAddFolder: () -> Unit, onRemoveFolder: (String) -> Unit, onRescan: () -> Unit) {
+fun SettingsScreen(
+    library: DesktopLibrary,
+    output: OutputSettings,
+    onOutputChange: (OutputSettings) -> Unit,
+    onAddFolder: () -> Unit,
+    onRemoveFolder: (String) -> Unit,
+    onRescan: () -> Unit,
+) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier.widthIn(max = 760.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(28.dp),
@@ -68,8 +79,8 @@ fun SettingsScreen(library: DesktopLibrary, onAddFolder: () -> Unit, onRemoveFol
                     )
                 }
             }
+            OutputCard(output, onOutputChange)
             EngineCard()
-            OutputsCard()
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(BrandMark.vector, contentDescription = null, tint = BrandCopper, modifier = Modifier.size(width = 46.dp, height = 24.dp))
                 Text("All-Meyn Player · Your library. Your hardware. All yours.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -98,7 +109,7 @@ private fun EngineCard() {
             is NativeEngine.Status.Ready -> {
                 Line("Decoder", "FFmpeg ${s.ffmpeg}")
                 Line("Formats", s.formats.joinToString(", "))
-                Line("Output", "Shared mode for now; bit-perfect (exclusive / ASIO) comes in a later stage")
+                Line("DSD", "DoP in exclusive mode, else PCM; native DSD (ASIO) comes next")
             }
             is NativeEngine.Status.Unavailable -> Text(
                 "The audio engine didn't load: ${s.reason}",
@@ -108,26 +119,58 @@ private fun EngineCard() {
     }
 }
 
+/** Pick the output and how songs reach it. */
 @Composable
-private fun OutputsCard() {
+private fun OutputCard(settings: OutputSettings, onChange: (OutputSettings) -> Unit) {
     var devices by remember { mutableStateOf<List<OutputDevice>?>(null) }
     LaunchedEffect(Unit) { devices = withContext(Dispatchers.IO) { NativeEngine.devices() } }
-    Panel("Audio outputs") {
+    Panel("Output") {
         val list = devices
-        when {
-            list == null -> Text("Looking for outputs…", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            list.isEmpty() -> Text("No outputs found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            else -> list.forEachIndexed { i, d ->
-                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                Column(Modifier.padding(vertical = 4.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val choices = listOf<OutputDevice?>(null) + list.orEmpty()
+        choices.forEachIndexed { i, d ->
+            if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            val id = d?.id.orEmpty()
+            Row(
+                Modifier.fillMaxWidth().clickable { onChange(settings.copy(deviceId = id)) }.padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                RadioButton(selected = settings.deviceId == id, onClick = { onChange(settings.copy(deviceId = id)) })
+                Column(Modifier.padding(start = 8.dp)) {
+                    if (d == null) {
+                        Text("Windows default", fontWeight = FontWeight.Medium)
+                        Text(list?.firstOrNull { it.isDefault }?.name ?: "Follows Windows' sound settings", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
                         Text(d.name, fontWeight = FontWeight.Medium)
-                        if (d.isDefault) Text("Default", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+                        Text("Windows mixer: ${d.mixLabel}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Text("Windows mixer: ${d.mixLabel}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
+        if (list == null) Text("Looking for outputs…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(8.dp))
+        SwitchLine(
+            "Exclusive mode (bit-perfect)",
+            "Each song goes to the DAC at its own rate and bit depth, untouched, bypassing the Windows mixer. " +
+                "Other apps can't play on this output meanwhile; use the DAC's volume.",
+            settings.exclusive,
+        ) { onChange(settings.copy(exclusive = it)) }
+        SwitchLine(
+            "DSD as DoP",
+            if (settings.exclusive) "DSF/DFF reach the DAC as DSD (packed in PCM frames). Off: DSD plays as PCM."
+            else "Needs exclusive mode; DSD plays as PCM meanwhile.",
+            settings.dop, enabled = settings.exclusive,
+        ) { onChange(settings.copy(dop = it)) }
+    }
+}
+
+@Composable
+private fun SwitchLine(title: String, detail: String, checked: Boolean, enabled: Boolean = true, onChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 4.dp)) {
+        Column(Modifier.weight(1f).padding(end = 16.dp)) {
+            Text(title, fontWeight = FontWeight.Medium)
+            Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked && enabled, onCheckedChange = onChange, enabled = enabled)
     }
 }
 

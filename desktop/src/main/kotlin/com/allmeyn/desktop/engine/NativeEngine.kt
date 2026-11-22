@@ -40,6 +40,8 @@ object NativeEngine {
     @JvmStatic private external fun outputDevices(): Array<String>
 
     // ---- player (only call when isReady) ----
+    /** Output for songs opened from now on: device ("" = default), exclusive (bit-perfect) or shared, DSD as DoP. */
+    @JvmStatic external fun playerSetOutput(deviceId: String, exclusive: Boolean, dop: Boolean)
     /** Opens a song paused at the start: null, or why it can't be played. Blocks briefly (file + device). */
     @JvmStatic external fun playerOpen(path: String): String?
     /** The song to play after the current one (gapless if same rate/channels): null, or why not. */
