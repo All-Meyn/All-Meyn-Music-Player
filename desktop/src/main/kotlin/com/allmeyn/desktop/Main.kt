@@ -3,7 +3,9 @@ package com.allmeyn.desktop
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -55,8 +57,12 @@ fun main() = application {
                 // Liquid Glass, as in the Android app: records the window once per frame and every glass
                 // element refracts it; 70 % resolution (the library's measured jank halving; edges stay sharp).
                 LiquidGlassTheme(dark = true, background = MaterialTheme.colorScheme.background, renderScale = 0.7f) {
-                    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                        App(library, player, pickFolder)
+                    // Text without its own colour is light on the dark background (Android gets this
+                    // from its root Surface).
+                    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
+                        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                            App(library, player, pickFolder)
+                        }
                     }
                 }
                 // The intro sits above the glass layer (glass draws over everything else inside the theme).

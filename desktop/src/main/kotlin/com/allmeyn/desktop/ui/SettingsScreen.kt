@@ -131,7 +131,10 @@ private fun Panel(title: String, content: @Composable () -> Unit) {
     Card(
         Modifier.fillMaxWidth(),
         // Translucent, not glass (as Android's PanelCard): the background art shows through.
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f)),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f),
+            contentColor = MaterialTheme.colorScheme.onSurface,  // (not derivable from a translucent colour)
+        ),
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)

@@ -183,7 +183,13 @@ private fun signed(v: Float) = if (v > 0f) "+%.1f".format(v).removeSuffix(".0") 
 
 @Composable
 private fun Section(title: String?, on: Boolean = true, toggle: ((Boolean) -> Unit)? = null, content: @Composable () -> Unit) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f))) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f),
+            contentColor = MaterialTheme.colorScheme.onSurface,  // (not derivable from a translucent colour)
+        ),
+    ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (title != null) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
