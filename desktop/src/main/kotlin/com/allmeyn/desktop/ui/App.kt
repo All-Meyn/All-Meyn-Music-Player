@@ -33,6 +33,11 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import com.allmeyn.desktop.engine.NativeEngine
+import com.allmeyn.desktop.engine.DacVolume
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -61,7 +66,7 @@ private val SECTIONS = listOf(
 
 /** The whole window: sidebar (search, sections), the current screen, and the player bar. */
 @Composable
-fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> String?) {
+fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> String?, shortcuts: ShortcutTarget) {
     val scope = rememberCoroutineScope()
     var output by remember { mutableStateOf(OutputSettings.load().also { it.apply() }) }
     var replayGain by remember { mutableStateOf(ReplayGainMode.load().also { it.apply(output) }) }
@@ -87,12 +92,33 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
             }
         }
     }
+    // Media keys (system hotkeys, also in the background), when on in Settings.
+    var mediaKeys by remember { mutableStateOf(MediaKeysSetting.enabled()) }
+    var mediaKeysTaken by remember { mutableStateOf<Int?>(null) }
+    LaunchedEffect(mediaKeys) {
+        if (!NativeEngine.isReady) return@LaunchedEffect
+        mediaKeysTaken = withContext(Dispatchers.IO) {
+            if (mediaKeys) NativeEngine.startMediaKeys() else { NativeEngine.stopMediaKeys(); null }
+        }
+    }
     LaunchedEffect(player) {
         while (true) {
             player.refresh()
+            if (NativeEngine.isReady) {
+                while (true) {
+                    when (NativeEngine.pollMediaKey()) {
+                        0 -> break
+                        1 -> player.togglePlay()
+                        2 -> player.next()
+                        3 -> player.previous()
+                        4 -> if (player.state == PlayState.PLAYING) player.togglePlay()  // Stop = pause (the queue stays)
+                    }
+                }
+            }
             delay(100)
         }
     }
+    val searchFocus = remember { FocusRequester() }
     // Each screen in the stack keeps its scroll position etc. while covered (as on Android), so
     // Back returns to exactly where you were; popped / left screens forget theirs.
     val screenStates = rememberSaveableStateHolder()
@@ -101,6 +127,34 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
     fun go(root: Route) { query = ""; forget(0); stack.clear(); stack.add(root) }
     fun push(r: Route) { query = ""; stack.add(r) }
     fun back() { if (stack.size > 1) { forget(stack.lastIndex); stack.removeAt(stack.lastIndex) } }
+    // Keyboard shortcuts (the window passes them in; see Shortcuts.kt).
+    SideEffect {
+        shortcuts.handler = { action ->
+            when (action) {
+                ShortcutAction.PLAY_PAUSE -> player.togglePlay()
+                ShortcutAction.NEXT -> player.next()
+                ShortcutAction.PREVIOUS -> player.previous()
+                ShortcutAction.SEEK_FORWARD -> player.seekTo(player.positionMs + 10_000)
+                ShortcutAction.SEEK_BACK -> player.seekTo((player.positionMs - 10_000).coerceAtLeast(0))
+                ShortcutAction.VOLUME_UP, ShortcutAction.VOLUME_DOWN, ShortcutAction.MUTE -> {
+                    val out = output
+                    scope.launch(Dispatchers.IO) {
+                        val v = DacVolume.read(out) ?: return@launch
+                        when (action) {
+                            ShortcutAction.MUTE -> DacVolume.setMuted(out, !v.muted)
+                            ShortcutAction.VOLUME_UP -> DacVolume.set(out, v.level + 0.02f)
+                            else -> DacVolume.set(out, v.level - 0.02f)
+                        }
+                    }
+                }
+                ShortcutAction.SHUFFLE -> player.toggleShuffle()
+                ShortcutAction.REPEAT -> player.cycleRepeat()
+                ShortcutAction.SEARCH -> runCatching { searchFocus.requestFocus() }
+                ShortcutAction.BACK -> if (query.isNotEmpty()) query = "" else back()
+            }
+            true
+        }
+    }
     val chooseFolder: () -> Unit = { pickFolder()?.let { scope.launch { library.addFolder(it) } } }
     var addingToPlaylist by remember { mutableStateOf<List<Track>?>(null) }
 
@@ -121,7 +175,7 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                 }
                 OutlinedTextField(
                     value = query, onValueChange = { query = it }, singleLine = true,
-                    placeholder = { Text("Search") }, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                    placeholder = { Text("Search") }, modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).focusRequester(searchFocus),
                 )
                 val root = stack.first()
                 SECTIONS.forEach { (label, route) ->
@@ -189,6 +243,9 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                             },
                             replayGain = replayGain,
                             backdrop = backdrop,
+                            mediaKeys = mediaKeys,
+                            mediaKeysTaken = mediaKeysTaken,
+                            onMediaKeysChange = { mediaKeys = it; MediaKeysSetting.setEnabled(it) },
                             onBackdropChange = { backdrop = it; BackdropSettings.setStrength(it) },
                             onReplayGainChange = { mode ->
                                 replayGain = mode

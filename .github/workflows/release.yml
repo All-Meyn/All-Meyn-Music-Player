@@ -1,0 +1,102 @@
+name: Release
+
+# Pushing a version tag (v1.0.0) builds the signed Android release APK and the Windows installer
+# and publishes both on a GitHub Release. The tag must match version.txt.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+env:
+  # Must match android.ndkVersion in app/build.gradle.kts.
+  NDK_VERSION: 27.0.12077973
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: v
+        name: The tag matches version.txt
+        run: |
+          VERSION="$(tr -d '[:space:]' < version.txt)"
+          [ "v$VERSION" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME doesn't match version.txt ($VERSION)"; exit 1; }
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  android:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Install NDK
+        run: |
+          SDKMANAGER="$(ls -d "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | tail -1)"
+          yes | "$SDKMANAGER" "ndk;$NDK_VERSION" | tail -2
+      - name: Cache FFmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v5
+        with:
+          path: app/src/main/cpp/ffmpeg
+          key: ffmpeg-${{ hashFiles('scripts/build-ffmpeg.sh') }}-ndk-${{ env.NDK_VERSION }}
+      - name: Build FFmpeg
+        if: steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: scripts/build-ffmpeg.sh "$ANDROID_HOME/ndk/$NDK_VERSION"
+      - uses: gradle/actions/setup-gradle@v5
+      - name: The release signing key (repository secrets)
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          [ -n "$KEYSTORE_BASE64" ] || { echo "Missing secret ANDROID_KEYSTORE_BASE64 (see the release notes in the PR)"; exit 1; }
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+          echo "ANDROID_KEYSTORE_FILE=$RUNNER_TEMP/release.p12" >> "$GITHUB_ENV"
+      - name: Build the signed release APK
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: ./gradlew --no-daemon assembleRelease
+      - name: Check the signature and name the APK
+        run: |
+          APK=app/build/outputs/apk/release/app-release.apk
+          test -f "$APK" || { echo "no signed APK (is signing configured?)"; ls app/build/outputs/apk/release; exit 1; }
+          APKSIGNER="$(ls -d "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          "$APKSIGNER" verify --print-certs "$APK" | head -3
+          rm -f "$RUNNER_TEMP/release.p12"
+          mkdir -p out && cp "$APK" "out/All-Meyn-Player-${{ needs.check.outputs.version }}.apk"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-android
+          path: out/*.apk
+
+  windows:
+    needs: check
+    uses: ./.github/workflows/desktop.yml
+
+  publish:
+    needs: [check, android, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # create the release
+    steps:
+      - uses: actions/download-artifact@v6
+        with:
+          path: dl
+      - name: Create the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          mkdir out
+          cp dl/release-android/*.apk out/
+          MSI="$(find dl/all-meyn-player-windows -name '*.msi' | head -1)"
+          test -n "$MSI" || { echo "no MSI in the Windows build"; exit 1; }
+          cp "$MSI" "out/All-Meyn-Player-$VERSION.msi"
+          (cd out && sha256sum * > SHA256SUMS.txt)
+          gh release create "$GITHUB_REF_NAME" out/* -R "$GITHUB_REPOSITORY" --title "All-Meyn Player $VERSION" --generate-notes

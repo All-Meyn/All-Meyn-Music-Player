@@ -28,6 +28,7 @@ on:
       - "gradle/**"
       - ".github/workflows/desktop.yml"
   workflow_dispatch:
+  workflow_call:  # release.yml builds the installer with this same workflow
 
 # Least privilege: the build only reads the repository (artifacts and caches use their own tokens).
 permissions:

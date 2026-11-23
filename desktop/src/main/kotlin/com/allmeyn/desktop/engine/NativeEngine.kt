@@ -49,6 +49,10 @@ object NativeEngine {
      * exclusive (bit-perfect) or shared, DSD as DoP. ASIO tries native DSD first.
      */
     @JvmStatic external fun playerSetOutput(deviceId: String, exclusive: Boolean, dop: Boolean)
+    /** Media keys as system hotkeys: start (returns taken keys as bits: play/pause, next, previous, stop), stop, next press (0 = none; 1-4). */
+    @JvmStatic external fun startMediaKeys(): Int
+    @JvmStatic external fun stopMediaKeys()
+    @JvmStatic external fun pollMediaKey(): Int
     /** Dark (or light) title bar for the window [hwnd] (Windows 10 2004+ / 11; ignored elsewhere). */
     @JvmStatic external fun setDarkTitleBar(hwnd: Long, dark: Boolean)
     /** Opens the ASIO driver's own control panel; null if it opened, else why not. */

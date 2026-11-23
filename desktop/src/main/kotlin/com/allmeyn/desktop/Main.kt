@@ -22,7 +22,15 @@ import com.allmeyn.desktop.library.DesktopLibrary
 import com.allmeyn.desktop.ui.AllMeynTheme
 import com.allmeyn.desktop.ui.App
 import com.allmeyn.desktop.ui.PlayerController
+import com.allmeyn.desktop.ui.ShortcutTarget
 import com.allmeyn.desktop.ui.StartupOverlay
+import com.allmeyn.desktop.ui.shortcutFor
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
 import com.allmeyn.desktop.ui.rememberWindowsDark
 import com.wexpa.liquidglass.LiquidGlassTheme
 
@@ -36,7 +44,13 @@ fun main() = application {
     val library = remember { DesktopLibrary() }
     val appScope = rememberCoroutineScope()
     val player = remember { PlayerController(appScope) }
+    val shortcuts = remember { ShortcutTarget() }
     Window(
+        // Keys nothing focused used (a text field keeps Space and the arrows) become shortcuts.
+        onKeyEvent = { e ->
+            e.type == KeyEventType.KeyDown &&
+                shortcutFor(e.key, e.isCtrlPressed, e.isShiftPressed, e.isAltPressed)?.let { shortcuts.handler?.invoke(it) } == true
+        },
         onCloseRequest = {
             // Keep the queue exactly as it is now (the periodic save may be up to 10 s behind).
             // (Nothing queued: leave the file; emptying the queue is saved by App's loop.)
@@ -67,7 +81,7 @@ fun main() = application {
                     // from its root Surface).
                     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {
                         Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-                            App(library, player, pickFolder)
+                            App(library, player, pickFolder, shortcuts)
                         }
                     }
                 }

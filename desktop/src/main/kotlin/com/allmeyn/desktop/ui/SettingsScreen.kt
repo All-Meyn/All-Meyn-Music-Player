@@ -26,6 +26,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -56,6 +58,9 @@ fun SettingsScreen(
     replayGain: ReplayGainMode,
     backdrop: Int,
     onBackdropChange: (Int) -> Unit,
+    mediaKeys: Boolean,
+    mediaKeysTaken: Int?,
+    onMediaKeysChange: (Boolean) -> Unit,
     onReplayGainChange: (ReplayGainMode) -> Unit,
     onAddFolder: () -> Unit,
     onRemoveFolder: (String) -> Unit,
@@ -100,6 +105,32 @@ fun SettingsScreen(
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            Panel("Keyboard") {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Media keys", fontWeight = FontWeight.Medium)
+                        Text(
+                            when {
+                                !mediaKeys -> "Off: the keyboard's play/pause, next and previous keys go to other apps."
+                                mediaKeysTaken == null -> "Starting…"
+                                mediaKeysTaken == 0b1111 -> "Play/pause, next, previous and stop control All-Meyn, also in the background."
+                                mediaKeysTaken == 0 -> "Another app is using the media keys; close it and turn this off and on."
+                                else -> "Some media keys are used by another app; the rest control All-Meyn."
+                            },
+                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Switch(checked = mediaKeys, onCheckedChange = onMediaKeysChange)
+                }
+                Spacer(Modifier.height(4.dp))
+                Text("Shortcuts", fontWeight = FontWeight.Medium)
+                ShortcutAction.entries.forEach { a ->
+                    Row {
+                        Text(a.keys, Modifier.width(110.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                        Text(a.label, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
             Panel("Playback") {
                 Text("ReplayGain", fontWeight = FontWeight.Medium)
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -119,7 +150,7 @@ fun SettingsScreen(
             EngineCard()
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(BrandMark.vector, contentDescription = null, tint = BrandCopper, modifier = Modifier.size(width = 46.dp, height = 24.dp))
-                Text("All-Meyn Player · Your library. Your hardware. All yours.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("All-Meyn Player $appVersion · Your library. Your hardware. All yours.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Text("ASIO is a trademark and software of Steinberg Media Technologies GmbH.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -165,6 +196,8 @@ private fun EngineCard() {
 private fun OutputCard(settings: OutputSettings, onChange: (OutputSettings) -> Unit) {
     var devices by remember { mutableStateOf<List<OutputDevice>?>(null) }
     var asio by remember { mutableStateOf<List<String>>(emptyList()) }
+    var panelErrors by remember { mutableStateOf<Map<String, String?>>(emptyMap()) }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             devices = NativeEngine.devices()
@@ -205,10 +238,15 @@ private fun OutputCard(settings: OutputSettings, onChange: (OutputSettings) -> U
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     RadioButton(selected = settings.deviceId == id, onClick = { onChange(settings.copy(deviceId = id)) })
-                    Column(Modifier.padding(start = 8.dp)) {
+                    Column(Modifier.padding(start = 8.dp).weight(1f)) {
                         Text(name, fontWeight = FontWeight.Medium)
                         Text("ASIO · bit-perfect · native DSD when the driver supports it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        panelErrors[name]?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
                     }
+                    // Each driver's own settings (buffer size, the DAC's options), whether or not it's selected.
+                    TextButton(onClick = {
+                        scope.launch { panelErrors = panelErrors + (name to withContext(Dispatchers.IO) { NativeEngine.asioControlPanel(name) }) }
+                    }) { Text("Control panel") }
                 }
             }
         }
@@ -250,3 +288,6 @@ private fun Line(label: String, value: String) {
         Text(value)
     }
 }
+
+/** The installed version (jpackage sets it for the packaged app; "dev" when run from Gradle). */
+private val appVersion: String = System.getProperty("jpackage.app-version") ?: "dev"
