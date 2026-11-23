@@ -87,7 +87,7 @@ jobs:
           deps=$(x86_64-w64-mingw32-objdump -p build/desktop-native/allmeyn_desktop.dll | awk '/DLL Name/ {print tolower($3)}' | sort -u | tr '\n' ' ')
           echo "imports: $deps"
           for d in $deps; do
-            case "$d" in kernel32.dll|msvcrt.dll|ole32.dll|bcrypt.dll|user32.dll|advapi32.dll|avrt.dll|ksuser.dll) ;;
+            case "$d" in kernel32.dll|msvcrt.dll|ole32.dll|bcrypt.dll|user32.dll|advapi32.dll|avrt.dll|ksuser.dll|dwmapi.dll) ;;
               *) echo "unexpected DLL dependency: $d"; exit 1 ;; esac
           done
           x86_64-w64-mingw32-objdump -p build/desktop-native/allmeyn_desktop.dll | grep -q Java_com_allmeyn_desktop_engine_NativeEngine_ffmpegVersion
