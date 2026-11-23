@@ -169,6 +169,14 @@ class PlayerController(private val scope: CoroutineScope) {
         }
     }
 
+    /** Drag-to-reorder: moves the song at [from] to [to] in the queue (play order); the playing song keeps playing. */
+    fun move(from: Int, to: Int) {
+        if (from !in queue.indices || to !in queue.indices || from == to) return
+        queue = queue.toMutableList().apply { add(to, removeAt(from)) }
+        index = QueueOrder.indexAfterMove(index, from, to)
+        queueNextInEngine()  // the song after this one may have changed
+    }
+
     /** Keeps only the song playing. */
     fun clearOthers() {
         val c = current ?: return

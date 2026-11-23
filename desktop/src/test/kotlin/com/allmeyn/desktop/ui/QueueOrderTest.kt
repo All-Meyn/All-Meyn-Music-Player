@@ -36,6 +36,13 @@ class QueueOrderTest {
         assertEquals(withDup, back)
     }
 
+    @Test fun playingSongFollowsAMove() {
+        assertEquals(5, QueueOrder.indexAfterMove(2, 2, 5))  // the playing song itself
+        assertEquals(1, QueueOrder.indexAfterMove(2, 0, 4))  // one from before it went after
+        assertEquals(3, QueueOrder.indexAfterMove(2, 6, 1))  // one from after it went before
+        assertEquals(2, QueueOrder.indexAfterMove(2, 4, 6))  // both after: unchanged
+    }
+
     @Test fun repeatRules() {
         assertEquals(3, QueueOrder.autoNext(2, 8, RepeatMode.OFF))
         assertNull(QueueOrder.autoNext(7, 8, RepeatMode.OFF))

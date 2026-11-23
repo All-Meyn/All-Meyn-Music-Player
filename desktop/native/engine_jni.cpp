@@ -63,6 +63,8 @@ jobjectArray toJava(JNIEnv* env, const std::vector<std::string>& items) {
 
 }  // namespace
 
+namespace allmeyn { void setDarkTitleBar(void* hwnd, bool dark); }  // window_theme.cpp
+
 extern "C" {
 
 /** "Lavc61.19.101" style libavcodec ident (same as the Android decoder reports). */
@@ -285,6 +287,10 @@ JNIEXPORT jbyteArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_readCo
 }
 
 /** The Windows folder picker over [owner] (HWND). The folder, or null if cancelled. */
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_setDarkTitleBar(JNIEnv*, jclass, jlong hwnd, jboolean dark) {
+    allmeyn::setDarkTitleBar(reinterpret_cast<void*>(static_cast<intptr_t>(hwnd)), dark == JNI_TRUE);
+}
+
 JNIEXPORT jstring JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_pickFolder(JNIEnv* env, jclass, jlong owner, jstring title) {
     const std::string path = allmeyn::pickFolder(reinterpret_cast<void*>(owner), fromJava(env, title));
     return path.empty() ? nullptr : toJava(env, path);

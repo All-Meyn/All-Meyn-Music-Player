@@ -40,6 +40,14 @@ object QueueOrder {
         return out to (if (current == null) -1 else out.indexOf(current))
     }
 
+    /** Where the song at [playing] ends up after moving the song at [from] to [to]. */
+    fun indexAfterMove(playing: Int, from: Int, to: Int): Int = when {
+        playing == from -> to
+        from < playing && to >= playing -> playing - 1
+        from > playing && to <= playing -> playing + 1
+        else -> playing
+    }
+
     /** The song to follow [index] by itself (end of a song): repeat one = the same, all = wraps. */
     fun autoNext(index: Int, size: Int, repeat: RepeatMode): Int? = when {
         index !in 0 until size -> null

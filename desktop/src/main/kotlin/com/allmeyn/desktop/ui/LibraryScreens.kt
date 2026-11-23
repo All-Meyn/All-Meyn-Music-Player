@@ -21,6 +21,9 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import com.wexpa.liquidglass.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -246,7 +249,11 @@ private fun countLabel(f: FolderNode): String {
 
 @Composable
 fun QueueScreen(player: PlayerController) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = CONTENT_PADDING) {
+    val listState = rememberLazyListState()
+    // Positions in the queue as keys (duplicates allowed); drag the ≡ handle to move a song.
+    val entries = remember(player.queue) { player.queue.mapIndexed { i, t -> i to t } }
+    val reorder = rememberReorderState(entries, listState) { (i, t) -> "q$i:${t.uri}" }
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = CONTENT_PADDING) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) { ScreenTitle("Queue") }
@@ -256,13 +263,19 @@ fun QueueScreen(player: PlayerController) {
             }
             if (player.queue.isEmpty()) Text("Nothing queued. Play an album or a song from your library.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        itemsIndexed(player.queue) { i, track ->
-            TrackRow(
-                track, number = null, showAlbum = true, current = i == player.index,
-                onClick = { player.jump(i) },
-                trailing = { TextButton(onClick = { player.remove(i) }) { Text("Remove") } },
-                menu = { emptyList() },
-            )
+        items(reorder.rows, key = { (i, t) -> "q$i:${t.uri}" }) { entry ->
+            val (i, track) = entry
+            Box(reorderRow(reorder, entry)) {
+                TrackRow(
+                    track, number = null, showAlbum = true, current = i == player.index,
+                    onClick = { player.jump(i) },
+                    trailing = {
+                        TextButton(onClick = { player.remove(i) }) { Text("Remove") }
+                        DragHandle(reorder, entry, player::move)
+                    },
+                    menu = { emptyList() },
+                )
+            }
         }
     }
 }
