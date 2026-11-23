@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "core/player.h"
+#include "core/replay_gain.h"
 #include "core/dsd_feed.h"
 #include "core/sample_convert.h"
 #include "core/source.h"
@@ -302,6 +303,15 @@ static std::string writeTaggedMp3(const std::vector<uint8_t>& cover) {
     text("TRCK", "3/12");
     text("TPOS", "1/2");
     text("TYER", "2005");
+    auto txxx = [&](const std::string& desc, const std::string& v) {
+        std::vector<uint8_t> b{0};  // Latin-1
+        b.insert(b.end(), desc.begin(), desc.end());
+        b.push_back(0);
+        b.insert(b.end(), v.begin(), v.end());
+        frame("TXXX", b);
+    };
+    txxx("REPLAYGAIN_TRACK_GAIN", "-7.25 dB");
+    txxx("replaygain_album_gain", "-6.50 dB");
     std::vector<uint8_t> apic{0};  // Latin-1
     const std::string mime = "image/png";
     apic.insert(apic.end(), mime.begin(), mime.end());
@@ -632,6 +642,90 @@ static void testDsp() {
     player.setDsp(DspSettings{});
 }
 
+// ---- ReplayGain -------------------------------------------------------------------------------------
+/** clip16.flac with a Vorbis comment block holding [comments] ("KEY=value"). */
+static std::string flacWithComments(const std::vector<std::string>& comments) {
+    FILE* in = std::fopen(asset("clip16.flac").c_str(), "rb");
+    std::vector<uint8_t> f(4 << 20);
+    f.resize(std::fread(f.data(), 1, f.size(), in));
+    std::fclose(in);
+    // fLaC, then STREAMINFO (34 bytes) first: insert our block right after it.
+    const bool streaminfoLast = (f[4] & 0x80) != 0;
+    std::vector<uint8_t> body;
+    auto le32 = [&](uint32_t v) { for (int i = 0; i < 4; i++) body.push_back((uint8_t) (v >> (8 * i))); };
+    const std::string vendor = "allmeyn-test";
+    le32((uint32_t) vendor.size());
+    body.insert(body.end(), vendor.begin(), vendor.end());
+    le32((uint32_t) comments.size());
+    for (const auto& c : comments) { le32((uint32_t) c.size()); body.insert(body.end(), c.begin(), c.end()); }
+    std::vector<uint8_t> block{(uint8_t) (4 | (streaminfoLast ? 0x80 : 0)), (uint8_t) (body.size() >> 16), (uint8_t) (body.size() >> 8), (uint8_t) body.size()};
+    block.insert(block.end(), body.begin(), body.end());
+    f[4] &= 0x7F;
+    f.insert(f.begin() + 4 + 4 + 34, block.begin(), block.end());
+    const std::string path = "/tmp/allmeyn_rg.flac";
+    FILE* o = std::fopen(path.c_str(), "wb");
+    std::fwrite(f.data(), 1, f.size(), o);
+    std::fclose(o);
+    return path;
+}
+
+static void testReplayGain() {
+    check(parseGainDb("-6.20 dB") == -6.2f && parseGainDb("+1.5") == 1.5f && parseGainDb(" -6,2 dB ") == -6.2f, "replaygain: parses dB like Android");
+    check(std::isnan(parseGainDb("loud")) && std::isnan(parseGainDb("-99 dB")) && std::isnan(parseGainDb("")), "replaygain: refuses junk and absurd values");
+    check(r128ToReplayGainDb("-1280") == 0.0f && r128ToReplayGainDb("256") == 6.0f, "replaygain: Opus R128 (Q7.8, +5 dB)");
+    ReplayGains only;
+    only.trackDb = -3.0f;
+    check(pickGainDb(only, ReplayGainMode::Album) == -3.0f && std::isnan(pickGainDb(only, ReplayGainMode::Off)), "replaygain: album mode falls back to the track gain");
+    check(gainFactor(3.0f) == 1.0f && std::fabs(gainFactor(-6.0206f) - 0.5f) < 1e-4f, "replaygain: never boosts; -6.02 dB = half");
+
+    const ReplayGains mp3 = readReplayGains(writeTaggedMp3({0x89, 0x50, 0x4E, 0x47}));
+    check(mp3.trackDb == -7.25f && mp3.albumDb == -6.5f, "replaygain: ID3 TXXX tags (any case)", mp3.trackDb);
+    const std::string flac = flacWithComments({"TITLE=Gain", "REPLAYGAIN_TRACK_GAIN=-6.0206 dB", "REPLAYGAIN_ALBUM_GAIN=-2.00 dB"});
+    const ReplayGains vc = readReplayGains(flac);
+    check(std::fabs(vc.trackDb + 6.0206f) < 1e-4f && vc.albumDb == -2.0f, "replaygain: FLAC Vorbis comments", vc.trackDb);
+    check(std::isnan(readReplayGains(asset("clip16.flac")).trackDb), "replaygain: untagged file has none");
+
+    // Through the player: track mode halves the samples from the first one; off = untouched.
+    std::string err;
+    auto ref = openSource(asset("clip16.flac"), err);
+    const auto all = decodeAll(*ref);
+    FakeOutput* fake = nullptr;
+    Player player([&] { auto o = std::make_unique<FakeOutput>(); fake = o.get(); return o; });
+    auto pullFrames = [&](int n) {
+        std::vector<float> out;
+        std::vector<float> buf(512 * 2);
+        for (int tries = 0; (int) out.size() < n * 2 && tries < 4000; tries++) {
+            const int got = fake->pull(buf.data(), std::min(512, n - (int) out.size() / 2));
+            out.insert(out.end(), buf.begin(), buf.begin() + got * 2);
+            if (got == 0) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        return out;
+    };
+    player.setReplayGain(ReplayGainMode::Track);
+    check(player.open(flac, err) && std::fabs(player.info().replayGainDb + 6.0206f) < 1e-4f, "replaygain: the song reports its gain " + err);
+    player.play();
+    auto out = pullFrames(3000);
+    double worst = 0;
+    for (size_t k = 0; k < out.size(); k++) worst = std::max(worst, (double) std::fabs(out[k] - all[k] * 0.5f));
+    check(out.size() == 6000 && worst < 1e-4, "replaygain: applied from the first sample", worst);
+    // Gapless into an untagged song: full level exactly from its first sample.
+    check(player.setNext(asset("clip16.flac"), err), "replaygain: queue an untagged song");
+    std::vector<float> rest;
+    for (int tries = 0; rest.size() < (size_t) (88200 - 3000 + 2000) * 2 && tries < 8000; tries++) {
+        auto part = pullFrames(512);
+        rest.insert(rest.end(), part.begin(), part.end());
+    }
+    const size_t join = (size_t) (88200 - 3000) * 2;
+    bool exactJoin = rest.size() >= join + 4000;
+    for (size_t k = 0; exactJoin && k < 4000; k++) exactJoin &= rest[join + k] == all[k];
+    double before = 0;
+    for (size_t k = join - 200; k < join; k++) before = std::max(before, (double) std::fabs(rest[k] - all[88200 * 2 - (join - k)] * 0.5f));
+    check(exactJoin && before < 1e-4, "replaygain: switches exactly at the gapless join", before);
+    player.setReplayGain(ReplayGainMode::Off);
+    check(player.open(flac, err) && std::isnan(player.info().replayGainDb), "replaygain: off = no gain");
+    player.close();
+}
+
 int main() {
     testLossless("clip16.flac", "FLAC", 16, kHash16);
     testLossless("clip24.flac", "FLAC", 24, kHash24);
@@ -655,6 +749,7 @@ int main() {
     testNativeDsd();
     testPlanar();
     testDsp();
+    testReplayGain();
     std::printf(failures ? "%d desktop core test(s) FAILED\n" : "desktop core tests passed\n", failures);
     return failures ? 1 : 0;
 }

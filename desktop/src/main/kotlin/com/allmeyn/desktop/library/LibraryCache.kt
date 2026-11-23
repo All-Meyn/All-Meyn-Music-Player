@@ -60,7 +60,7 @@ object LibraryCache {
         }
     }
 
-    private fun escape(s: String): String {
+    internal fun escape(s: String): String {
         if (s.none { it == '\\' || it == '\t' || it == '\n' || it == '\r' }) return s
         val b = StringBuilder(s.length + 8)
         for (c in s) when (c) {
@@ -73,7 +73,7 @@ object LibraryCache {
         return b.toString()
     }
 
-    private fun unescape(s: String): String {
+    internal fun unescape(s: String): String {
         if ('\\' !in s) return s
         val b = StringBuilder(s.length)
         var i = 0

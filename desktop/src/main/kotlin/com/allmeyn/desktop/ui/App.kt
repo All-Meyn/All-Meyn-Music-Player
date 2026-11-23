@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -39,15 +40,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.allmeyn.desktop.engine.DspStore
 import com.allmeyn.desktop.engine.OutputSettings
+import com.allmeyn.desktop.engine.ReplayGainMode
 import com.allmeyn.desktop.engine.PlayState
 import com.allmeyn.desktop.engine.TrackInfo
 import com.allmeyn.desktop.library.DesktopLibrary
+import com.allmeyn.player.library.Track
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val SECTIONS = listOf(
     "Albums" to Route.Albums, "Artists" to Route.Artists, "Songs" to Route.Songs,
-    "Folders" to Route.Folders(), "Queue" to Route.Queue, "DSP" to Route.Dsp, "Settings" to Route.Settings,
+    "Folders" to Route.Folders(), "Playlists" to Route.Playlists, "Queue" to Route.Queue, "DSP" to Route.Dsp,
+    "Settings" to Route.Settings,
 )
 
 /** The whole window: sidebar (search, sections), the current screen, and the player bar. */
@@ -55,6 +59,7 @@ private val SECTIONS = listOf(
 fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> String?) {
     val scope = rememberCoroutineScope()
     var output by remember { mutableStateOf(OutputSettings.load().also { it.apply() }) }
+    var replayGain by remember { mutableStateOf(ReplayGainMode.load().also { it.apply(output) }) }
     var dsp by remember { mutableStateOf(DspStore.load().also(DspStore::apply)) }
     val stack = remember { mutableStateListOf<Route>(Route.Albums) }
     var query by remember { mutableStateOf("") }
@@ -74,7 +79,9 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
     fun push(r: Route) { query = ""; stack.add(r) }
     fun back() { if (stack.size > 1) { forget(stack.lastIndex); stack.removeAt(stack.lastIndex) } }
     val chooseFolder: () -> Unit = { pickFolder()?.let { scope.launch { library.addFolder(it) } } }
+    var addingToPlaylist by remember { mutableStateOf<List<Track>?>(null) }
 
+    CompositionLocalProvider(LocalAddToPlaylist provides { tracks -> if (tracks.isNotEmpty()) addingToPlaylist = tracks }) {
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.weight(1f)) {
             // ---- sidebar ----
@@ -111,7 +118,8 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
             Box(Modifier.weight(1f).fillMaxHeight()) {
                 val view = library.view
                 val route = stack.last()
-                val needsMusic = route !is Route.Settings && route !is Route.Queue && route !is Route.Dsp && route !is Route.NowPlaying
+                val needsMusic = route !is Route.Settings && route !is Route.Queue && route !is Route.Dsp && route !is Route.NowPlaying &&
+                    route !is Route.Playlists && route !is Route.PlaylistPage
                 when {
                     query.isNotBlank() -> SearchResults(
                         view.search.find(query), player,
@@ -128,7 +136,10 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                         Route.Songs -> SongList(view.songs, player)
                         is Route.Folders -> FolderBrowser(view.folders, route.path, player, onOpen = { push(Route.Folders(it)) }, onBack = if (stack.size > 1) ::back else null)
                         Route.Queue -> QueueScreen(player)
-                        Route.NowPlaying -> NowPlayingScreen(player, onBack = { if (stack.size > 1) back() else go(Route.Albums) })
+                        Route.Playlists -> PlaylistsScreen(library.playlists, view, onOpen = { push(Route.PlaylistPage(it.id)) })
+                        is Route.PlaylistPage -> library.playlists.all.firstOrNull { it.id == route.id }
+                            ?.let { PlaylistPage(it, library.playlists, view, player, onBack = ::back) } ?: Missing(::back)
+                        Route.NowPlaying -> NowPlayingScreen(player, replayGain, onBack = { if (stack.size > 1) back() else go(Route.Albums) })
                         Route.Dsp -> DspScreen(dsp) { change ->
                             val old = dsp
                             val new = change(old).sanitized()
@@ -147,7 +158,15 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                                 output = new
                                 new.save()
                                 new.apply()
+                                replayGain.apply(new)  // on for shared, off for bit-perfect outputs
                                 player.reopen()  // hear the change now, from the same spot
+                            },
+                            replayGain = replayGain,
+                            onReplayGainChange = { mode ->
+                                replayGain = mode
+                                mode.save()
+                                mode.apply(output)
+                                player.reopen()
                             },
                             onAddFolder = chooseFolder,
                             onRemoveFolder = { scope.launch { library.removeFolder(it) } },
@@ -165,6 +184,8 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                 else if (player.current != null) { query = ""; if (stack.last() != Route.NowPlaying) stack.add(Route.NowPlaying) }
             },
         )
+    }
+    addingToPlaylist?.let { tracks -> AddToPlaylistDialog(tracks, library.playlists) { addingToPlaylist = null } }
     }
 }
 
@@ -197,11 +218,23 @@ fun PlayerBar(player: PlayerController, onOpenQueue: () -> Unit, onOpenNowPlayin
         Column(Modifier.weight(1f).padding(horizontal = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             val color = MaterialTheme.colorScheme.onSurface
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                val on = MaterialTheme.colorScheme.primary
+                val off = MaterialTheme.colorScheme.onSurfaceVariant
+                IconButton(onClick = player::toggleShuffle) { ControlGlyph(ControlIcon.SHUFFLE, if (player.shuffle) on else off, 16.dp) }
                 IconButton(onClick = player::previous, enabled = track != null) { ControlGlyph(ControlIcon.PREVIOUS, color, 16.dp) }
                 FilledIconButton(onClick = player::togglePlay, enabled = track != null, modifier = Modifier.size(44.dp)) {
                     ControlGlyph(if (player.state == PlayState.PLAYING) ControlIcon.PAUSE else ControlIcon.PLAY, MaterialTheme.colorScheme.onPrimary, 16.dp)
                 }
-                IconButton(onClick = player::next, enabled = track != null && player.index < player.queue.lastIndex) { ControlGlyph(ControlIcon.NEXT, color, 16.dp) }
+                IconButton(
+                    onClick = player::next,
+                    enabled = track != null && QueueOrder.manualNext(player.index, player.queue.size, player.repeat) != null,
+                ) { ControlGlyph(ControlIcon.NEXT, color, 16.dp) }
+                IconButton(onClick = player::cycleRepeat) {
+                    ControlGlyph(
+                        if (player.repeat == RepeatMode.ONE) ControlIcon.REPEAT_ONE else ControlIcon.REPEAT,
+                        if (player.repeat == RepeatMode.OFF) off else on, 16.dp,
+                    )
+                }
             }
             // While dragging, the bar follows the pointer; the seek happens on release.
             var dragMs by remember(track) { mutableStateOf<Float?>(null) }

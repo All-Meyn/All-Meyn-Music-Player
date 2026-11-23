@@ -2,6 +2,7 @@
 // 16- and 24-bit integer audio exactly, so nothing is lost for those on the way to the output.
 #pragma once
 
+#include <cmath>
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -23,6 +24,7 @@ struct SourceInfo {
     // oldest bit), carried in the float slots as raw bits (only copied, never computed on).
     bool nativeDsd = false;
     int dsdRate = 0;          // DSD bit rate (2822400 for DSD64) when nativeDsd
+    float replayGainDb = NAN; // ReplayGain the player applies to this song (NAN = none)
 };
 
 /** How a DSF/DFF reaches the output. */
@@ -38,6 +40,7 @@ public:
     virtual bool seek(int64_t frame) = 0;
 
     void setPath(const std::string& p) { info_.path = p; }
+    void setReplayGainDb(float db) { info_.replayGainDb = db; }
 
 protected:
     SourceInfo info_;

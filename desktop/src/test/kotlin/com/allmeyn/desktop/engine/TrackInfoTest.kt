@@ -6,7 +6,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
 class TrackInfoTest {
-    private fun info(vararg f: String) = TrackInfo.from(arrayOf(*f, "C:/Music/01 Song.flac"))!!
+    private fun info(vararg f: String, gain: String = "") = TrackInfo.from(arrayOf(*f, "C:/Music/01 Song.flac", gain))!!
 
     @Test fun labelsAndTitles() {
         val t = info("FLAC", "96000", "2", "24", "960000", "", "Artist", "", "Speakers (FiiO Q series) · Windows mixer converts to 48.0 kHz")
@@ -17,6 +17,11 @@ class TrackInfoTest {
         assertEquals("MP3 · 44.1 kHz · mono", info("MP3", "44100", "1", "0", "0", "T", "A", "B", "x").formatLabel)
         assertEquals("A — B", info("MP3", "44100", "1", "0", "0", "T", "A", "B", "x").subtitle)
         assertEquals("DSF DSD64 → PCM 176.4 kHz", info("DSF DSD64 → PCM 176.4 kHz", "176400", "2", "0", "1", "", "", "", "x").formatLabel)
+    }
+
+    @Test fun replayGainField() {
+        assertNull(info("FLAC", "44100", "2", "16", "1", "", "", "", "x").replayGainDb)
+        assertEquals(-6.2f, info("FLAC", "44100", "2", "16", "1", "", "", "", "x", gain = "-6.20").replayGainDb)
     }
 
     @Test fun rejectsWrongFieldCount() {

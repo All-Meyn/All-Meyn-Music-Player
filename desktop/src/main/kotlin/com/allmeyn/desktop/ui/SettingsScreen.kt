@@ -43,6 +43,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import com.allmeyn.desktop.engine.OutputSettings
+import com.allmeyn.desktop.engine.ReplayGainMode
 import com.allmeyn.desktop.library.DesktopLibrary
 
 /** Music folders, the audio engine and the Windows outputs. */
@@ -51,6 +52,8 @@ fun SettingsScreen(
     library: DesktopLibrary,
     output: OutputSettings,
     onOutputChange: (OutputSettings) -> Unit,
+    replayGain: ReplayGainMode,
+    onReplayGainChange: (ReplayGainMode) -> Unit,
     onAddFolder: () -> Unit,
     onRemoveFolder: (String) -> Unit,
     onRescan: () -> Unit,
@@ -80,6 +83,22 @@ fun SettingsScreen(
                 }
             }
             OutputCard(output, onOutputChange)
+            Panel("Playback") {
+                Text("ReplayGain", fontWeight = FontWeight.Medium)
+                Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    ReplayGainMode.entries.forEach { mode ->
+                        Row(Modifier.clickable { onReplayGainChange(mode) }, verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = replayGain == mode, onClick = { onReplayGainChange(mode) })
+                            Text(mode.label)
+                        }
+                    }
+                }
+                Text(
+                    if (ReplayGainMode.appliesTo(output)) "Evens out loudness between songs from their ReplayGain tags. Only lowers volume, never boosts."
+                    else "Bit-perfect output (exclusive mode or ASIO) plays files untouched, so ReplayGain is off there. It applies with exclusive mode off.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             EngineCard()
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Icon(BrandMark.vector, contentDescription = null, tint = BrandCopper, modifier = Modifier.size(width = 46.dp, height = 24.dp))

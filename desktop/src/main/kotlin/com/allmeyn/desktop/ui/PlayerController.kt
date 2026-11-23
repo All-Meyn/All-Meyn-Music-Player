@@ -36,6 +36,12 @@ class PlayerController(private val scope: CoroutineScope) {
         private set
     var error by mutableStateOf<String?>(null)
         private set
+    var shuffle by mutableStateOf(false)
+        private set
+    var repeat by mutableStateOf(RepeatMode.OFF)
+        private set
+    /** While shuffled: the list in its own order (to go back to). The queue is always in play order. */
+    private var original: List<Track>? = null
 
     private var busy = 0           // engine opens in flight: don't poll (the engine holds its lock meanwhile)
     private var lastSerial = 0
@@ -43,26 +49,58 @@ class PlayerController(private val scope: CoroutineScope) {
     val current: Track? get() = queue.getOrNull(index)
     val durationMs: Long get() = playing?.durationMs?.takeIf { it > 0 } ?: current?.durationMs ?: 0
 
-    /** Plays [tracks] from [start]. */
+    /**
+     * Plays [tracks] from [start]. [shuffle] (a Shuffle button) turns shuffle on and starts at a
+     * random song; with shuffle already on, [start] plays first and the rest follow shuffled.
+     */
     fun play(tracks: List<Track>, start: Int = 0, shuffle: Boolean = false) {
         if (tracks.isEmpty()) return
-        if (shuffle) {
-            queue = tracks.shuffled()
+        if (shuffle) this.shuffle = true
+        if (this.shuffle) {
+            original = tracks
+            queue = QueueOrder.shuffled(tracks, if (shuffle) -1 else start.coerceIn(0, tracks.lastIndex))
             index = 0
         } else {
+            original = null
             queue = tracks
             index = start.coerceIn(0, tracks.lastIndex)
         }
         openCurrent()
     }
 
+    /** Shuffle on (the playing song stays, the rest are shuffled) / off (back to the list's order). */
+    fun toggleShuffle() {
+        if (!shuffle) {
+            original = queue
+            if (queue.isNotEmpty()) {
+                queue = QueueOrder.shuffled(queue, index)
+                if (index >= 0) index = 0
+            }
+            shuffle = true
+        } else {
+            val (list, at) = QueueOrder.unshuffled(queue, index, original ?: queue)
+            queue = list
+            index = at
+            original = null
+            shuffle = false
+        }
+        queueNextInEngine()
+    }
+
+    /** Repeat off → all → one. */
+    fun cycleRepeat() {
+        repeat = repeat.next()
+        queueNextInEngine()  // the song after this one may have changed
+    }
+
     fun next() {
-        if (index + 1 <= queue.lastIndex) jump(index + 1)
+        QueueOrder.manualNext(index, queue.size, repeat)?.let(::jump)
     }
 
     /** Back to the start of the song, or to the one before if it only just started. */
     fun previous() {
-        if (positionMs > 3000 || index <= 0) seekTo(0) else jump(index - 1)
+        val before = if (positionMs > 3000) null else QueueOrder.manualPrevious(index, queue.size, repeat)
+        if (before == null) seekTo(0) else jump(before)
     }
 
     fun jump(i: Int) {
@@ -78,27 +116,32 @@ class PlayerController(private val scope: CoroutineScope) {
     }
 
     fun playNext(track: Track) {
-        if (current == null) return play(listOf(track))
+        val c = current ?: return play(listOf(track))
         queue = queue.toMutableList().apply { add(index + 1, track) }
+        // In the list's own order it follows the playing song too (where it lands when unshuffled).
+        original = original?.let { o -> o.toMutableList().apply { val at = o.indexOf(c); add(if (at >= 0) at + 1 else size, track) } }
         queueNextInEngine()
     }
 
     fun addToQueue(track: Track) {
         if (current == null) return play(listOf(track))
         queue = queue + track
-        if (index + 1 == queue.lastIndex) queueNextInEngine()
+        original = original?.plus(track)
+        queueNextInEngine()  // it may be next (end of the queue, or repeat all wrapping)
     }
 
     fun remove(i: Int) {
         if (i !in queue.indices) return
         val wasCurrent = i == index
+        val removed = queue[i]
         queue = queue.toMutableList().apply { removeAt(i) }
+        original = original?.toMutableList()?.apply { remove(removed) }
         when {
             wasCurrent && queue.isEmpty() -> stop()
             wasCurrent -> jump(i.coerceAtMost(queue.lastIndex))
             else -> {
                 if (i < index) index--
-                if (i <= index + 1) queueNextInEngine()
+                queueNextInEngine()
             }
         }
     }
@@ -108,6 +151,7 @@ class PlayerController(private val scope: CoroutineScope) {
         val c = current ?: return
         queue = listOf(c)
         index = 0
+        original = original?.let { listOf(c) }
         queueNextInEngine()
     }
 
@@ -128,8 +172,8 @@ class PlayerController(private val scope: CoroutineScope) {
         if (playing == null || busy > 0) return
         val serial = NativeEngine.playerTrackSerial()
         if (serial != lastSerial) {
-            // The engine moved on gaplessly: follow it, and queue the song after.
-            index = (index + (serial - lastSerial)).coerceAtMost(queue.lastIndex)
+            // The engine moved on gaplessly (repeat one: the same song again): follow it, and queue the song after.
+            for (step in 0 until serial - lastSerial) QueueOrder.autoNext(index, queue.size, repeat)?.let { index = it }
             lastSerial = serial
             playing = TrackInfo.from(NativeEngine.playerInfo())
             queueNextInEngine()
@@ -138,7 +182,8 @@ class PlayerController(private val scope: CoroutineScope) {
         val rate = playing?.sampleRate?.coerceAtLeast(1) ?: 1
         positionMs = NativeEngine.playerPosition() * 1000 / rate
         when (state) {
-            PlayState.ENDED -> if (index < queue.lastIndex) jump(index + 1)  // next song in another format (or none queued)
+            // The next song in another format (no gapless join), or repeat; else the queue is done.
+            PlayState.ENDED -> QueueOrder.autoNext(index, queue.size, repeat)?.let(::jump)
             PlayState.ERROR -> error = NativeEngine.playerError().ifBlank { "Playback failed" }
             else -> {}
         }
@@ -147,6 +192,7 @@ class PlayerController(private val scope: CoroutineScope) {
     fun stop() {
         queue = emptyList()
         index = -1
+        original = null
         playing = null
         state = PlayState.IDLE
         if (NativeEngine.isReady) NativeEngine.playerClose()
@@ -186,7 +232,7 @@ class PlayerController(private val scope: CoroutineScope) {
     }
 
     private fun queueNextInEngine() {
-        val next = queue.getOrNull(index + 1)
+        val next = QueueOrder.autoNext(index, queue.size, repeat)?.let(queue::getOrNull)
         scope.launch {
             withContext(engine) {
                 if (next == null) NativeEngine.playerClearNext() else NativeEngine.playerSetNext(next.uri)

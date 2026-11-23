@@ -21,6 +21,7 @@ class LibraryView(val tracks: List<Track>) {
     val songs: List<Track> = LibraryIndex.tracksByTitle(tracks)
     val folders: List<FolderNode> = LibraryIndex.folderTree(tracks)
     val search = LibraryIndex.SearchIndex(artists, albums, tracks)
+    val byUri: Map<String, Track> = tracks.associateBy { it.uri }
     val isEmpty get() = tracks.isEmpty()
 }
 
@@ -29,6 +30,7 @@ class DesktopLibrary(private val dataDir: File = defaultDataDir()) {
     private val prefs = Preferences.userRoot().node("com/allmeyn/desktop")
     private val cacheFile = File(dataDir, "library.tsv")
     private val covers = CoverStore(File(dataDir, "covers"))
+    val playlists = DesktopPlaylists(dataDir)
 
     var folders by mutableStateOf(prefs.get(KEY_FOLDERS, "").split('\n').filter { it.isNotBlank() })
         private set

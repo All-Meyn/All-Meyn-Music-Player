@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.allmeyn.desktop.engine.ReplayGainMode
 
 /**
  * The playing song in full (as Android's Now Playing): big cover, title, artist · album, and where
@@ -27,7 +28,7 @@ import androidx.compose.ui.unit.dp
  * Opened by clicking the song in the player bar; clicking it again or Back returns.
  */
 @Composable
-fun NowPlayingScreen(player: PlayerController, onBack: () -> Unit) {
+fun NowPlayingScreen(player: PlayerController, replayGain: ReplayGainMode, onBack: () -> Unit) {
     val track = player.current
     Column(Modifier.fillMaxSize().padding(28.dp)) {
         ScreenTitle("Now playing", onBack = onBack)
@@ -51,6 +52,7 @@ fun NowPlayingScreen(player: PlayerController, onBack: () -> Unit) {
                     player.playing?.let { p ->
                         InfoLine("Source", p.formatLabel)
                         InfoLine("Output", p.output)
+                        p.replayGainDb?.let { InfoLine("Gain", "ReplayGain " + ReplayGainMode.label(it, replayGain)) }
                     }
                     player.error?.let { InfoLine("Error", it) }
                     if (player.queue.size > 1) {

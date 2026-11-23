@@ -1,9 +1,12 @@
 #include "tags.h"
 
 #include <cctype>
+#include <cmath>
+#include <cstdlib>
 #include <cstring>
 
 #include "codec_names.h"
+#include "replay_gain.h"
 
 extern "C" {
 #include <libavformat/avformat.h>
@@ -105,6 +108,51 @@ TagInfo readTags(const std::string& path) {
     t.ok = true;
     avformat_close_input(&f);
     return t;
+}
+
+float parseGainDb(const std::string& s) {
+    std::string v = s;
+    auto trim = [](std::string& x) {
+        while (!x.empty() && std::isspace((unsigned char) x.back())) x.pop_back();
+        size_t i = 0;
+        while (i < x.size() && std::isspace((unsigned char) x[i])) i++;
+        x.erase(0, i);
+    };
+    trim(v);
+    if (v.size() >= 2 && (v.compare(v.size() - 2, 2, "dB") == 0 || v.compare(v.size() - 2, 2, "DB") == 0)) v.resize(v.size() - 2);
+    trim(v);
+    for (char& c : v) if (c == ',') c = '.';
+    if (!v.empty() && v[0] == '+') v.erase(0, 1);
+    if (v.empty()) return NAN;
+    char* end = nullptr;
+    const float db = std::strtof(v.c_str(), &end);
+    if (!end || *end != '\0' || !std::isfinite(db) || db < -60.0f || db > 60.0f) return NAN;
+    return db;
+}
+
+float r128ToReplayGainDb(const std::string& s) {
+    char* end = nullptr;
+    const long q = std::strtol(s.c_str(), &end, 10);
+    if (s.empty() || !end || *end != '\0' || q < -32768 || q > 32767) return NAN;
+    return (float) q / 256.0f + 5.0f;
+}
+
+ReplayGains readReplayGains(const std::string& path) {
+    ReplayGains g;
+    std::string err;
+    AVFormatContext* f = openFormat(path, err);
+    if (!f) return g;
+    // Container tags are read on open; Ogg/Opus keep theirs on the stream (found without decoding).
+    if (avformat_find_stream_info(f, nullptr) < 0) { avformat_close_input(&f); return g; }
+    const int si = av_find_best_stream(f, AVMEDIA_TYPE_AUDIO, -1, -1, nullptr, 0);
+    AVStream* st = si >= 0 ? f->streams[si] : nullptr;
+    // (av_dict_get matches keys in any case.)
+    g.trackDb = parseGainDb(tag(f, st, {"REPLAYGAIN_TRACK_GAIN"}));
+    g.albumDb = parseGainDb(tag(f, st, {"REPLAYGAIN_ALBUM_GAIN"}));
+    if (std::isnan(g.trackDb)) g.trackDb = r128ToReplayGainDb(tag(f, st, {"R128_TRACK_GAIN"}));
+    if (std::isnan(g.albumDb)) g.albumDb = r128ToReplayGainDb(tag(f, st, {"R128_ALBUM_GAIN"}));
+    avformat_close_input(&f);
+    return g;
 }
 
 std::vector<uint8_t> readCover(const std::string& path) {

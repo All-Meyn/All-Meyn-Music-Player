@@ -40,6 +40,7 @@ bool Player::open(const std::string& path, std::string& error) {
         if (!fmt.bitExact) return false;  // plain PCM failed: nothing else to try
     }
     if (!output) return false;
+    prepareGain(*source);
     const SourceInfo info = source->info();
     ring_.init(std::max(kChunkFrames * 2, (int) (info.sampleRate * kRingSeconds)), info.channels);
     base_ = 0;
@@ -74,6 +75,7 @@ bool Player::open(const std::string& path, std::string& error) {
 bool Player::setNext(const std::string& path, std::string& error) {
     auto next = openSource(path, error, bestDsdMode());
     if (!next) return false;
+    prepareGain(*next);
     std::lock_guard<std::mutex> g(nextLock_);
     next_ = std::move(next);
     nextReady_ = nextIsCompatible();
@@ -85,6 +87,12 @@ void Player::clearNext() {
     std::lock_guard<std::mutex> g(nextLock_);
     next_.reset();
     nextReady_ = false;
+}
+
+void Player::prepareGain(Source& s) const {
+    const auto mode = (ReplayGainMode) rgMode_.load();
+    if (mode == ReplayGainMode::Off || s.info().dop || s.info().nativeDsd) return;
+    s.setReplayGainDb(pickGainDb(readReplayGains(s.info().path), mode));
 }
 
 bool Player::nextIsCompatible() const {
@@ -233,6 +241,7 @@ void Player::decodeLoop() {
                 std::string err;
                 auto again = openSource(heard.path, err, heard.nativeDsd ? DsdMode::Native : heard.dop ? DsdMode::Dop : DsdMode::Pcm);
                 if (again) {
+                    again->setReplayGainDb(heard.replayGainDb);
                     source_->seek(0);
                     std::lock_guard<std::mutex> n(nextLock_);
                     if (!next_) next_ = std::move(source_);
@@ -299,6 +308,9 @@ void Player::decodeLoop() {
         } else if (n == 0) {
             sourceEnded_ = true;
         } else {
+            // ReplayGain from the song's first sample (PCM only; set by prepareGain).
+            const float g = gainFactor(source_->info().replayGainDb);
+            if (g < 1.0f) for (size_t k = 0, e = (size_t) n * streamChannels_.load(); k < e; k++) chunk[k] *= g;
             have = n;
             sent = 0;
         }

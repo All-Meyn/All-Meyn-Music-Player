@@ -15,6 +15,7 @@
 
 #include "dsp_stage.h"
 #include "output.h"
+#include "replay_gain.h"
 #include "ring.h"
 #include "source.h"
 
@@ -41,6 +42,8 @@ public:
      */
     void setDsdModes(bool dop, bool native) { dopAllowed_ = dop; nativeAllowed_ = native; }
     void setDopAllowed(bool allowed) { setDsdModes(allowed, false); }
+    /** ReplayGain for songs opened from now on (the app passes Off for bit-perfect outputs). */
+    void setReplayGain(ReplayGainMode m) { rgMode_ = (int) m; }
     /** The DSP chain's settings (any time; applies at once). With processing on, DSD opens as PCM. */
     void setDsp(const DspSettings& s) { dsp_.setSettings(s); }
     /** The chain's meters while it processes the stream. */
@@ -100,6 +103,9 @@ private:
         return nativeAllowed_ ? DsdMode::Native : dopAllowed_ ? DsdMode::Dop : DsdMode::Pcm;
     }
     DspStage dsp_;
+    std::atomic<int> rgMode_{0};
+    /** Sets [s]'s ReplayGain from its tags and the mode (PCM only). */
+    void prepareGain(Source& s) const;
 
     mutable std::mutex nextLock_;
     std::unique_ptr<Source> next_;
