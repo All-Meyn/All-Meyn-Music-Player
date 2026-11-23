@@ -14,6 +14,7 @@ on:
       - "app/src/androidTest/assets/**"
       - "gradle/**"
       - ".github/workflows/desktop.yml"
+      - "version.txt"
   pull_request:
     paths:
       - "desktop/**"
@@ -27,7 +28,9 @@ on:
       - "app/src/androidTest/assets/**"
       - "gradle/**"
       - ".github/workflows/desktop.yml"
+      - "version.txt"
   workflow_dispatch:
+  workflow_call:  # release.yml builds the installer with this same workflow
 
 # Least privilege: the build only reads the repository (artifacts and caches use their own tokens).
 permissions:

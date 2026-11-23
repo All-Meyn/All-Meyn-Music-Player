@@ -6,6 +6,10 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+// "1.2.3" from version.txt -> versionCode 10203 (major * 10000 + minor * 100 + patch).
+val appVersion: String = rootProject.file("version.txt").readText().trim()
+val appVersionCode: Int = appVersion.split('.').map { it.toInt() }.let { (a, b, c) -> a * 10000 + b * 100 + c }
+
 android {
     namespace = "com.allmeyn.player"
     compileSdk = 37
@@ -16,8 +20,9 @@ android {
         applicationId = "com.allmeyn.player"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.4.0"
+        // One version for Android and Windows: version.txt at the repository root (x.y.z).
+        versionName = appVersion
+        versionCode = appVersionCode
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -33,8 +38,22 @@ android {
         }
     }
 
+    // Release signing from the environment (CI: repository secrets; never committed). Without it the
+    // release APK is built unsigned.
+    val keystore = System.getenv("ANDROID_KEYSTORE_FILE")?.takeIf { it.isNotBlank() && file(it).isFile }
+    signingConfigs {
+        if (keystore != null) create("release") {
+            storeFile = file(keystore)
+            storeType = "PKCS12"
+            storePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+            keyAlias = System.getenv("ANDROID_KEY_ALIAS")
+            keyPassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
+            if (keystore != null) signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }

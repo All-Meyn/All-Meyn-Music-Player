@@ -46,7 +46,7 @@ compose.desktop {
         nativeDistributions {
             targetFormats(TargetFormat.Msi)
             packageName = "All-Meyn Player"
-            packageVersion = "0.1.0"
+            packageVersion = file("../version.txt").readText().trim()  // shared with Android
             description = "Your library. Your hardware. All yours."
             vendor = "All-Meyn"
             // Per-OS/arch files copied next to the app: resources/windows-x64/allmeyn_desktop.dll.

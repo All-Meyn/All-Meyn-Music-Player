@@ -76,6 +76,7 @@ if(WIN32)
         asio_output.cpp
         endpoint_volume.cpp
         window_theme.cpp
+        media_keys.cpp
     )
     target_include_directories(allmeyn_desktop PRIVATE
         "${JDK_INCLUDE}"

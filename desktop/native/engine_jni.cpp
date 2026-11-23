@@ -64,6 +64,7 @@ jobjectArray toJava(JNIEnv* env, const std::vector<std::string>& items) {
 }  // namespace
 
 namespace allmeyn { void setDarkTitleBar(void* hwnd, bool dark); }  // window_theme.cpp
+namespace allmeyn { int startMediaKeys(); void stopMediaKeys(); int pollMediaKey(); }  // media_keys.cpp
 
 extern "C" {
 
@@ -287,6 +288,11 @@ JNIEXPORT jbyteArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_readCo
 }
 
 /** The Windows folder picker over [owner] (HWND). The folder, or null if cancelled. */
+/** Media keys: start (returns the keys taken as bits), stop, and the next press (0 = none). */
+JNIEXPORT jint JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_startMediaKeys(JNIEnv*, jclass) { return allmeyn::startMediaKeys(); }
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_stopMediaKeys(JNIEnv*, jclass) { allmeyn::stopMediaKeys(); }
+JNIEXPORT jint JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_pollMediaKey(JNIEnv*, jclass) { return allmeyn::pollMediaKey(); }
+
 JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_setDarkTitleBar(JNIEnv*, jclass, jlong hwnd, jboolean dark) {
     allmeyn::setDarkTitleBar(reinterpret_cast<void*>(static_cast<intptr_t>(hwnd)), dark == JNI_TRUE);
 }
