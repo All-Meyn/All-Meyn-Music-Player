@@ -13,6 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -24,7 +27,6 @@ import com.wexpa.liquidglass.material3.OutlinedButton
 import com.wexpa.liquidglass.material3.Slider
 import com.wexpa.liquidglass.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -80,14 +82,20 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
             Text("Chain", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
             Section(null) {
                 ChainRow(1, DspProcessor.VOCAL.label, "Always first", p.vocalOn, p.enabled, { v -> onChange { it.copy(vocalOn = v) } })
+                // The other three: drag the ≡ handle to change the order (as on Android).
                 val movable = p.order.filter { it != DspProcessor.VOCAL }
-                movable.forEachIndexed { i, proc ->
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    ChainRow(
-                        i + 2, proc.label, null, isOn(p, proc), p.enabled, { v -> onChange { setOn(it, proc, v) } },
-                        onUp = if (i > 0) ({ onChange { move(it, proc, -1) } }) else null,
-                        onDown = if (i < movable.lastIndex) ({ onChange { move(it, proc, +1) } }) else null,
-                    )
+                val listState = rememberLazyListState()
+                val reorder = rememberReorderState(movable, listState) { it.name }
+                LazyColumn(Modifier.fillMaxWidth().height(53.dp * movable.size), state = listState, userScrollEnabled = false) {
+                    items(reorder.rows, key = { it.name }) { proc ->
+                        Column(reorderRow(reorder, proc)) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            ChainRow(
+                                reorder.rows.indexOf(proc) + 2, proc.label, null, isOn(p, proc), p.enabled, { v -> onChange { setOn(it, proc, v) } },
+                                handle = { DragHandle(reorder, proc) { from, to -> onChange { moveTo(it, from, to) } } },
+                            )
+                        }
+                    }
                 }
             }
 
@@ -155,12 +163,10 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
     }
 }
 
-/** Moves [proc] one place up (-1) or down (+1) among the movable processors; Vocal stays first. */
-internal fun move(p: DspParams, proc: DspProcessor, by: Int): DspParams {
+/** Moves the movable processor at [from] to [to] (positions after Vocal, which stays first). */
+internal fun moveTo(p: DspParams, from: Int, to: Int): DspParams {
     val rest = p.order.filter { it != DspProcessor.VOCAL }.toMutableList()
-    val from = rest.indexOf(proc)
-    val to = from + by
-    if (from < 0 || to !in rest.indices) return p
+    if (from !in rest.indices || to !in rest.indices || from == to) return p
     rest.add(to, rest.removeAt(from))
     return p.copy(order = listOf(DspProcessor.VOCAL) + rest)
 }
@@ -206,7 +212,7 @@ private fun Section(title: String?, on: Boolean = true, toggle: ((Boolean) -> Un
 @Composable
 private fun ChainRow(
     position: Int, label: String, detail: String?, on: Boolean, enabled: Boolean, onToggle: (Boolean) -> Unit,
-    onUp: (() -> Unit)? = null, onDown: (() -> Unit)? = null,
+    handle: (@Composable () -> Unit)? = null,
 ) {
     Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
         Text("$position", style = MaterialTheme.typography.titleMedium, modifier = Modifier.width(28.dp))
@@ -214,10 +220,7 @@ private fun ChainRow(
             Text(label, fontWeight = FontWeight.Medium)
             if (detail != null) Text(detail, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        if (detail == null) {
-            TextButton(onClick = { onUp?.invoke() }, enabled = onUp != null) { Text("↑") }
-            TextButton(onClick = { onDown?.invoke() }, enabled = onDown != null) { Text("↓") }
-        }
+        handle?.invoke()
         Switch(checked = on, onCheckedChange = onToggle, enabled = enabled, modifier = Modifier.padding(start = 8.dp))
     }
 }

@@ -75,6 +75,7 @@ if(WIN32)
         wasapi_output.cpp
         asio_output.cpp
         endpoint_volume.cpp
+        window_theme.cpp
     )
     target_include_directories(allmeyn_desktop PRIVATE
         "${JDK_INCLUDE}"
@@ -83,7 +84,7 @@ if(WIN32)
     # Steinberg's ASIO SDK headers, unmodified (GPLv3 option; see third_party/asiosdk/README.vendored).
     target_include_directories(allmeyn_desktop SYSTEM PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/third_party/asiosdk")
     target_compile_options(allmeyn_desktop PRIVATE -Wall -Wextra -Werror -O2)
-    target_link_libraries(allmeyn_desktop PRIVATE allmeyn_core ole32 uuid avrt ksuser shell32 advapi32)
+    target_link_libraries(allmeyn_desktop PRIVATE allmeyn_core ole32 uuid avrt ksuser shell32 advapi32 dwmapi)
     # No lib prefix (System.load), no MinGW runtime DLLs, JNI symbols exported undecorated.
     set_target_properties(allmeyn_desktop PROPERTIES PREFIX "")
     target_link_options(allmeyn_desktop PRIVATE -static -static-libgcc -static-libstdc++ -Wl,--kill-at -s)

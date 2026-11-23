@@ -23,6 +23,7 @@ import com.allmeyn.desktop.ui.AllMeynTheme
 import com.allmeyn.desktop.ui.App
 import com.allmeyn.desktop.ui.PlayerController
 import com.allmeyn.desktop.ui.StartupOverlay
+import com.allmeyn.desktop.ui.rememberWindowsDark
 import com.wexpa.liquidglass.LiquidGlassTheme
 
 /** The app icon for the window and taskbar (the same artwork as the Play Store icon). */
@@ -52,11 +53,16 @@ fun main() = application {
         val pickFolder: () -> String? = {
             if (NativeEngine.isReady) NativeEngine.pickFolder(window.windowHandle, "Choose your music folder") else null
         }
-        AllMeynTheme {
+        val dark = rememberWindowsDark()
+        // The window's title bar follows too (Windows draws it; light by default).
+        androidx.compose.runtime.LaunchedEffect(dark) {
+            if (NativeEngine.isReady) NativeEngine.setDarkTitleBar(window.windowHandle, dark)
+        }
+        AllMeynTheme(dark) {
             Box(Modifier.fillMaxSize()) {
                 // Liquid Glass, as in the Android app: records the window once per frame and every glass
                 // element refracts it; 70 % resolution (the library's measured jank halving; edges stay sharp).
-                LiquidGlassTheme(dark = true, background = MaterialTheme.colorScheme.background, renderScale = 0.7f) {
+                LiquidGlassTheme(dark = dark, background = MaterialTheme.colorScheme.background, renderScale = 0.7f) {
                     // Text without its own colour is light on the dark background (Android gets this
                     // from its root Surface).
                     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onBackground) {

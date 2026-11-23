@@ -13,7 +13,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.wexpa.liquidglass.material3.AlertDialog
@@ -91,7 +93,9 @@ fun PlaylistPage(playlist: Playlist, playlists: DesktopPlaylists, view: LibraryV
     val rows = playlist.uris.mapIndexedNotNull { i, uri -> view.byUri[uri]?.let { i to it } }
     val songs = rows.map { it.second }
     val missing = playlist.uris.size - rows.size
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = CONTENT_PADDING) {
+    val listState = rememberLazyListState()
+    val reorder = rememberReorderState(rows, listState) { (at, t) -> "p$at:${t.uri}" }
+    LazyColumn(Modifier.fillMaxSize(), state = listState, contentPadding = CONTENT_PADDING) {
         item {
             ScreenTitle(playlist.name, onBack)
             Text(
@@ -106,8 +110,10 @@ fun PlaylistPage(playlist: Playlist, playlists: DesktopPlaylists, view: LibraryV
             }
             if (playlist.uris.isEmpty()) Text("Empty. Right-click any song → Add to playlist.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        itemsIndexed(rows, key = { k, (i, t) -> "$k:$i:${t.uri}" }) { k, (at, track) ->
-            TrackRow(
+        items(reorder.rows, key = { (at, t) -> "p$at:${t.uri}" }) { row ->
+            val (at, track) = row
+            val k = rows.indexOf(row)
+            Box(reorderRow(reorder, row)) { TrackRow(
                 track, number = null, showAlbum = true, current = player.current?.uri == track.uri,
                 onClick = { player.play(songs, k) },
                 menu = {
@@ -119,14 +125,12 @@ fun PlaylistPage(playlist: Playlist, playlists: DesktopPlaylists, view: LibraryV
                     )
                 },
                 trailing = {
-                    // Up / down past the neighbouring shown song (positions in the saved list).
-                    val prev = rows.getOrNull(k - 1)?.first
-                    val next = rows.getOrNull(k + 1)?.first
-                    TextButton(onClick = { prev?.let { playlists.move(playlist.id, at, it) } }, enabled = prev != null) { Text("↑") }
-                    TextButton(onClick = { next?.let { playlists.move(playlist.id, at, it) } }, enabled = next != null) { Text("↓") }
                     TextButton(onClick = { playlists.removeAt(playlist.id, at) }) { Text("Remove") }
+                    // Drag among the shown songs; the move lands at the target's place in the saved list
+                    // (songs missing from the library keep theirs).
+                    DragHandle(reorder, row) { from, to -> playlists.move(playlist.id, rows[from].first, rows[to].first) }
                 },
-            )
+            ) }
         }
     }
     if (renaming) NameDialog("Rename playlist", playlist.name, "Rename", onDismiss = { renaming = false }) { name ->

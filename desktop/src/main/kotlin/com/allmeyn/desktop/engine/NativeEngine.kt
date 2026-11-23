@@ -49,6 +49,8 @@ object NativeEngine {
      * exclusive (bit-perfect) or shared, DSD as DoP. ASIO tries native DSD first.
      */
     @JvmStatic external fun playerSetOutput(deviceId: String, exclusive: Boolean, dop: Boolean)
+    /** Dark (or light) title bar for the window [hwnd] (Windows 10 2004+ / 11; ignored elsewhere). */
+    @JvmStatic external fun setDarkTitleBar(hwnd: Long, dark: Boolean)
     /** Opens the ASIO driver's own control panel; null if it opened, else why not. */
     @JvmStatic external fun asioControlPanel(driverName: String): String?
     /** The output's volume (DacVolume layout), "" = Windows' default; null if none. Off the UI thread. */

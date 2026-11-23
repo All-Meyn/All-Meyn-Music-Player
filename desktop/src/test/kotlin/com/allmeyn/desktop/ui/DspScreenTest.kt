@@ -10,11 +10,12 @@ class DspScreenTest {
     private val default = DspParams().sanitized()
 
     @Test fun movesProcessorsButVocalStaysFirst() {
-        val down = move(default, DspProcessor.COMPANDER, +1)
-        assertEquals(listOf(DspProcessor.VOCAL, DspProcessor.BASS, DspProcessor.COMPANDER, DspProcessor.IMPACT), down.order)
-        assertEquals(down, move(down, DspProcessor.IMPACT, +1))  // already last
-        assertEquals(default, move(default, DspProcessor.COMPANDER, -1))  // can't pass Vocal
-        assertEquals(default, move(default, DspProcessor.VOCAL, +1))      // Vocal doesn't move
+        // default after Vocal: COMPANDER, BASS, IMPACT
+        val moved = moveTo(default, 0, 2)
+        assertEquals(listOf(DspProcessor.VOCAL, DspProcessor.BASS, DspProcessor.IMPACT, DspProcessor.COMPANDER), moved.order)
+        assertEquals(listOf(DspProcessor.VOCAL, DspProcessor.IMPACT, DspProcessor.COMPANDER, DspProcessor.BASS), moveTo(default, 2, 0).order)
+        assertEquals(default, moveTo(default, 1, 1))
+        assertEquals(default, moveTo(default, 0, 3))  // out of range: unchanged
     }
 
     @Test fun savedOrderReadsLikeAndroidAndVocalIsPutFirst() {

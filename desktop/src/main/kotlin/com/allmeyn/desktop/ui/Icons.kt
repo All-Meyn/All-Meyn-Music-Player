@@ -14,7 +14,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /** The player's control icons, drawn directly (no icon font or library needed). */
-enum class ControlIcon { PLAY, PAUSE, PREVIOUS, NEXT, QUEUE, SHUFFLE, REPEAT, REPEAT_ONE }
+enum class ControlIcon { PLAY, PAUSE, PREVIOUS, NEXT, QUEUE, SHUFFLE, REPEAT, REPEAT_ONE, DRAG }
 
 @Composable
 fun ControlGlyph(icon: ControlIcon, color: Color, size: Dp = 18.dp) {
@@ -47,6 +47,11 @@ fun ControlGlyph(icon: ControlIcon, color: Color, size: Dp = 18.dp) {
                 }
                 // a small "play" mark beside the shorter last line
                 drawPath(Path().apply { moveTo(w * 0.7f, h * 0.62f); lineTo(w, h * 0.8f); lineTo(w * 0.7f, h * 0.98f); close() }, color)
+            }
+            ControlIcon.DRAG -> {
+                // ≡ (the drag handle)
+                val stroke = w * 0.11f
+                for (y in listOf(h * 0.28f, h * 0.5f, h * 0.72f)) drawLine(color, Offset(w * 0.1f, y), Offset(w * 0.9f, y), stroke, StrokeCap.Round)
             }
             ControlIcon.SHUFFLE -> {
                 // two crossing lines, each ending in an arrowhead on the right
