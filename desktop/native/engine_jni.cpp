@@ -2,6 +2,7 @@
 // What the engine was built with, the Windows outputs, and the player (one song at a time).
 #include <jni.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <memory>
@@ -157,11 +158,13 @@ JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetOut
  * processor ids (Vocal is always put first). With the DSP processing, DSD songs open as PCM.
  */
 JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetDsp(JNIEnv* env, jclass, jboolean enabled, jfloatArray values, jintArray order) {
-    constexpr int kValues = 16;
+    using allmeyn::dsp::kMaxEqBands;
+    constexpr int kValues = 16, kEqHead = 3, kMaxValues = kValues + kEqHead + 4 * kMaxEqBands;
     if (!values || !order || env->GetArrayLength(values) < kValues || env->GetArrayLength(order) < allmeyn::dsp::kNumProcessors) return;
-    jfloat v[kValues];
+    const jsize length = std::min<jsize>(env->GetArrayLength(values), kMaxValues);
+    jfloat v[kMaxValues] = {};
     jint o[allmeyn::dsp::kNumProcessors];
-    env->GetFloatArrayRegion(values, 0, kValues, v);
+    env->GetFloatArrayRegion(values, 0, length, v);
     env->GetIntArrayRegion(order, 0, allmeyn::dsp::kNumProcessors, o);
     allmeyn::DspSettings s;
     s.enabled = enabled == JNI_TRUE;
@@ -171,6 +174,17 @@ JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetDsp
     p.impactOn = v[7] != 0; p.impactPercent = v[8]; p.impactReleaseMs = v[9];
     p.volumeDb = v[10]; p.softClip = v[11] != 0;
     p.vocalOn = v[12] != 0; p.presencePercent = v[13]; p.detailPercent = v[14]; p.airPercent = v[15];
+    // Headphone EQ: [on, preampDb, bandCount, (type, Hz, dB, Q) x bandCount] (as on Android)
+    if (length >= kValues + kEqHead) {
+        p.eqOn = v[16] != 0;
+        p.eqPreampDb = v[17];
+        const int n = std::clamp((int) v[18], 0, std::min(kMaxEqBands, (int) (length - kValues - kEqHead) / 4));
+        p.eqBandCount = n;
+        for (int i = 0; i < n; i++) {
+            const jfloat* b = v + kValues + kEqHead + 4 * i;
+            p.eqBands[i] = allmeyn::dsp::EqBand{(int) b[0], b[1], b[2], b[3]};
+        }
+    }
     for (int i = 0; i < allmeyn::dsp::kNumProcessors; i++) p.order[i] = o[i];
     player().setDsp(s);
 }

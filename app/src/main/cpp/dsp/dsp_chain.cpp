@@ -26,6 +26,7 @@ constexpr float kImpactSensitivity = 0.5f;
 constexpr float kImpactFastAttackSeconds = 0.0005f;
 constexpr float kImpactDeadbandDb = 2.0f;
 constexpr double kSmoothingSeconds = 0.05;
+constexpr double kPi = 3.14159265358979323846;
 constexpr float kClipperKnee = 0.891f;  // -1 dBFS
 constexpr float kDetectorFloor = 1.0e-10f;
 constexpr float kImpactEnvFloor = 1.0e-5f;
@@ -319,7 +320,7 @@ Chain::Chain(double sampleRate, int channels) : sr(sampleRate), chans(std::min(s
     voc.down2.setup(aaHz, 2.0 * sr, kButterQ2);
     for (Smoothed* s : {&compMix, &bassMix, &impMix, &ratioMinusOne, &transition, &hfTransition,
                         &bassRatio, &bassPivot, &impactAmount, &volumeDb,
-                        &vocalMix, &presence, &detail, &air})
+                        &vocalMix, &presence, &detail, &air, &eqMix, &eqPreamp})
         s->reset(sr, kSmoothingSeconds);
     reset();
 }
@@ -338,7 +339,8 @@ void Chain::reset() {
     bassDet.meanSquare = 0;
     bassDet.levelDb = powerToDb(kDetectorFloor);
     voc.reset();
-    compFresh = bassFresh = impFresh = vocFresh = true;
+    for (auto& f : eqFilters) f.reset();
+    compFresh = bassFresh = impFresh = vocFresh = eqFresh = true;
     m = Meters {};
 }
 
@@ -350,9 +352,85 @@ void primeDetector(float db, float& meanSquare, float& levelDb) {
 }
 }  // namespace
 
+void EqFilter::design(const EqBand& band, double fs) {
+    const double fc = std::clamp((double) band.freqHz, 10.0, 0.49 * fs);
+    const double q = std::clamp((double) band.q, 0.05, 50.0);
+    const double gain = std::clamp((double) band.gainDb, -30.0, 30.0);
+    const double A = std::pow(10.0, gain / 40.0);
+    const double w = 2.0 * kPi * fc / fs;
+    const double c = std::cos(w), alpha = std::sin(w) / (2.0 * q), sA = std::sqrt(A);
+    double nb0, nb1, nb2, na0, na1, na2;
+    switch (band.type) {
+        case kEqLowShelf:
+            nb0 = A * ((A + 1) - (A - 1) * c + 2 * sA * alpha);
+            nb1 = 2 * A * ((A - 1) - (A + 1) * c);
+            nb2 = A * ((A + 1) - (A - 1) * c - 2 * sA * alpha);
+            na0 = (A + 1) + (A - 1) * c + 2 * sA * alpha;
+            na1 = -2 * ((A - 1) + (A + 1) * c);
+            na2 = (A + 1) + (A - 1) * c - 2 * sA * alpha;
+            break;
+        case kEqHighShelf:
+            nb0 = A * ((A + 1) + (A - 1) * c + 2 * sA * alpha);
+            nb1 = -2 * A * ((A - 1) + (A + 1) * c);
+            nb2 = A * ((A + 1) + (A - 1) * c - 2 * sA * alpha);
+            na0 = (A + 1) - (A - 1) * c + 2 * sA * alpha;
+            na1 = 2 * ((A - 1) - (A + 1) * c);
+            na2 = (A + 1) - (A - 1) * c - 2 * sA * alpha;
+            break;
+        case kEqLowPass:
+            nb0 = (1 - c) / 2; nb1 = 1 - c; nb2 = (1 - c) / 2;
+            na0 = 1 + alpha; na1 = -2 * c; na2 = 1 - alpha;
+            break;
+        case kEqHighPass:
+            nb0 = (1 + c) / 2; nb1 = -(1 + c); nb2 = (1 + c) / 2;
+            na0 = 1 + alpha; na1 = -2 * c; na2 = 1 - alpha;
+            break;
+        default:  // peak
+            nb0 = 1 + alpha * A; nb1 = -2 * c; nb2 = 1 - alpha * A;
+            na0 = 1 + alpha / A; na1 = -2 * c; na2 = 1 - alpha / A;
+            break;
+    }
+    b0 = nb0 / na0; b1 = nb1 / na0; b2 = nb2 / na0; a1 = na1 / na0; a2 = na2 / na0;
+}
+
+double EqFilter::magnitudeDb(double hz, double fs) const {
+    const double w = 2.0 * kPi * hz / fs;
+    const double cr = std::cos(w), ci = -std::sin(w), c2r = std::cos(2 * w), c2i = -std::sin(2 * w);
+    const double nr = b0 + b1 * cr + b2 * c2r, ni = b1 * ci + b2 * c2i;
+    const double dr = 1 + a1 * cr + a2 * c2r, di = a1 * ci + a2 * c2i;
+    return 10.0 * std::log10((nr * nr + ni * ni) / (dr * dr + di * di));
+}
+
+void Chain::runEq(float x[kMaxChannels], int n) {
+    const float mix = eqMix.next();
+    const float pre = dbToGain(eqPreamp.next());
+    if (mix <= 0.0f && eqMix.idle()) { eqFresh = true; return; }  // off: untouched, no work
+    if (eqFresh) {  // switching on: fresh filters (no stale ringing)
+        for (int i = 0; i < kMaxEqBands; i++) eqFilters[i].reset();
+        eqFresh = false;
+    }
+    for (int c = 0; c < n; c++) {
+        double y = x[c] * (double) pre;
+        for (int i = 0; i < eqCount; i++) y = eqFilters[i].process(c, y);
+        x[c] += mix * ((float) y - x[c]);
+    }
+}
+
 void Chain::setParams(const Params& p) {
     const bool snapNow = first;  // the first call jumps straight to the values
     first = false;
+    // Headphone EQ: redesign only the bands that changed (their state is kept, so no click).
+    eqMix.set(p.eqOn ? 1.0f : 0.0f, snapNow);
+    eqPreamp.set(clampf(p.eqPreampDb, -30.0f, 10.0f), snapNow);
+    const int count = std::clamp(p.eqBandCount, 0, kMaxEqBands);
+    for (int i = 0; i < count; i++) {
+        if (i >= eqCount || !(p.eqBands[i] == eqDesigned[i])) {
+            if (i >= eqCount) eqFilters[i].reset();
+            eqFilters[i].design(p.eqBands[i], sr);
+            eqDesigned[i] = p.eqBands[i];
+        }
+    }
+    eqCount = count;
     compMix.set(p.companderOn ? 1.0f : 0.0f, snapNow);
     bassMix.set(p.bassOn ? 1.0f : 0.0f, snapNow);
     impMix.set(p.impactOn ? 1.0f : 0.0f, snapNow);
@@ -593,6 +671,7 @@ void Chain::process(float* data, int frames) {
                 case kVocal: runVocal(x, chans); break;
             }
         }
+        runEq(x, chans);  // headphone correction last, before volume and soft clip
         const float vol = dbToGain(volumeDb.next());
         for (int c = 0; c < chans; c++) {
             float y = x[c] * vol;
@@ -607,6 +686,11 @@ void Chain::process(float* data, int frames) {
     for (float* v : {&voc.lp, &voc.bp, &voc.envFast, &voc.envSlow, &voc.airHp, &voc.airHp2}) snap(*v);
     voc.up1.snapToZero(); voc.up2.snapToZero(); voc.down1.snapToZero(); voc.down2.snapToZero();
     voc.fill1.snapToZero(); voc.fill2.snapToZero(); snap(voc.airEnv);
+    for (int i = 0; i < eqCount; i++)
+        for (int c = 0; c < kMaxChannels; c++) {
+            if (std::fabs(eqFilters[i].z1[c]) < 1e-30) eqFilters[i].z1[c] = 0;
+            if (std::fabs(eqFilters[i].z2[c]) < 1e-30) eqFilters[i].z2[c] = 0;
+        }
     m.vocalDb = vocFresh ? 0.0f : vocalMix.value() * amplitudeToDb(voc.gain);
     m.airCutoffHz = cutoffDet.cutoffHz();
     m.outputPeak = peak;

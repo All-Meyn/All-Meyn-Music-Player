@@ -468,6 +468,102 @@ int main() {
         check(rel > -35 && rel < -5, "air on lossy: fill sits below the music under the cutoff (dB)", rel);
     }
 
+    // ---- Headphone EQ (parametric) ----
+    // AutoEq's Sennheiser HD 650 profile (oratory1990, ParametricEQ.txt): our filters must give the
+    // same curve as AutoEq's own (reference values computed with AutoEq's biquad formulas, 44.1 kHz).
+    Params hd650;
+    hd650.eqOn = true;
+    hd650.eqPreampDb = -6.1f;
+    {
+        const EqBand b[] = {
+            {kEqLowShelf, 105, 6.4f, 0.70f}, {kEqPeak, 8800, 5.1f, 1.42f}, {kEqPeak, 118, -3.1f, 0.50f},
+            {kEqPeak, 37, 0.7f, 3.96f}, {kEqPeak, 3169, -1.7f, 3.89f}, {kEqHighShelf, 10000, -2.1f, 0.70f},
+            {kEqPeak, 1227, -1.2f, 2.53f}, {kEqPeak, 2055, 1.2f, 3.23f}, {kEqPeak, 587, 0.4f, 1.19f},
+            {kEqPeak, 5332, -1.1f, 5.75f}};
+        hd650.eqBandCount = 10;
+        for (int i = 0; i < 10; i++) hd650.eqBands[i] = b[i];
+    }
+    {
+        const double ref[][2] = {{20, 6.07}, {100, 0.493}, {1000, -0.541}, {3169, -1.347}, {8800, 4.364}, {15000, -1.464}};
+        double worst = 0;
+        for (auto& r : ref) {
+            double sum = 0;
+            for (int i = 0; i < hd650.eqBandCount; i++) {
+                EqFilter f;
+                f.design(hd650.eqBands[i], 44100.0);
+                sum += f.magnitudeDb(r[0], 44100.0);
+            }
+            worst = std::fmax(worst, std::fabs(sum - r[1]));
+        }
+        check(worst < 0.002, "EQ: AutoEq HD 650 profile matches AutoEq's own curve (max |dB| off)", worst);
+    }
+    // Through the chain (48 kHz): a tone's gain = preamp + the filters' response there.
+    {
+        auto expectDb = [&](double hz) {
+            double sum = hd650.eqPreampDb;
+            for (int i = 0; i < hd650.eqBandCount; i++) { EqFilter f; f.design(hd650.eqBands[i], SR); sum += f.magnitudeDb(hz, SR); }
+            return sum;
+        };
+        double worst = 0;
+        for (double hz : {60.0, 1000.0, 8800.0}) worst = std::fmax(worst, std::fabs(gainDb(hd650, hz, -20) - expectDb(hz)));
+        check(worst < 0.05, "EQ: tones through the chain get preamp + filter response (max |dB| off)", worst);
+    }
+    // Off = untouched (bit-exact), even with bands set.
+    {
+        Params p = hd650; p.eqOn = false;
+        auto in = sine(1000, -12, 0.3);
+        auto out = run(p, in);
+        double maxDiff = 0;
+        for (size_t i = 0; i < in.size(); i++) maxDiff = std::fmax(maxDiff, std::fabs(out[i] - in[i]));
+        check(maxDiff == 0.0, "EQ off: output identical to input", maxDiff);
+    }
+    // Low/high pass: -3 dB at the corner with Q 0.707, steep beyond.
+    {
+        EqFilter lp, hp;
+        lp.design({kEqLowPass, 1000, 0, 0.7071f}, SR);
+        hp.design({kEqHighPass, 1000, 0, 0.7071f}, SR);
+        const double a = lp.magnitudeDb(1000, SR), b = hp.magnitudeDb(1000, SR), c = lp.magnitudeDb(4000, SR);
+        check(std::fabs(a + 3.01) < 0.05 && std::fabs(b + 3.01) < 0.05 && c < -23, "EQ: low/high pass -3 dB at the corner, -24 dB two octaves past", c);
+    }
+    // A 20 Hz shelf at 384 kHz stays exact (double precision) and stable.
+    {
+        EqFilter f;
+        f.design({kEqLowShelf, 20, 6.0f, 0.7f}, 384000.0);
+        check(std::fabs(f.magnitudeDb(5, 384000.0) - 6.0) < 0.1 && std::fabs(f.magnitudeDb(2000, 384000.0)) < 0.05,
+              "EQ: 20 Hz low shelf at 384 kHz: +6 dB below, flat above", f.magnitudeDb(5, 384000.0));
+        Chain c(384000.0, 2);
+        Params p; p.eqOn = true; p.eqBandCount = 1; p.eqBands[0] = {kEqLowShelf, 20, 6.0f, 0.7f};
+        c.setParams(p);
+        std::vector<float> buf(2 * 4096);
+        double peak = 0;
+        for (int blk = 0; blk < 200; blk++) {
+            for (int i = 0; i < 4096; i++) buf[2 * i] = buf[2 * i + 1] = (float) (0.5 * std::sin(2 * PI * 30 * (blk * 4096 + i) / 384000.0));
+            c.process(buf.data(), 4096);
+            if (blk >= 150) for (float v : buf) peak = std::fmax(peak, std::fabs(v));  // steady state
+        }
+        const double want = 0.5 * std::pow(10.0, f.magnitudeDb(30, 384000.0) / 20.0);
+        check(std::fabs(peak / want - 1.0) < 0.02, "EQ: stable at 384 kHz (30 Hz tone through the shelf: peak / expected)", peak / want);
+    }
+    // Switching the EQ on mid-stream doesn't click: no sample-to-sample jump bigger than the tone's own.
+    {
+        Chain c(SR, 2);
+        Params off = hd650; off.eqOn = false;
+        c.setParams(off);
+        auto in = sine(200, -10, 1.0);
+        double worstStep = 0, toneStep = 0;
+        float last = 0;
+        for (size_t i = 0, blk = 0; i < in.size(); i += 2 * 480, blk++) {
+            if (blk == 50) c.setParams(hd650);
+            c.process(in.data() + i, 480);
+            for (size_t k = i; k < i + 2 * 480; k += 2) {
+                const double step = std::fabs(in[k] - last);
+                if (blk < 50) toneStep = std::fmax(toneStep, step); else worstStep = std::fmax(worstStep, step);
+                last = in[k];
+            }
+        }
+        check(worstStep < toneStep * 1.6, "EQ: switching on fades in (largest step vs the tone's own)", worstStep / toneStep);
+    }
+
     std::printf(failures ? "%d DSP test(s) FAILED\n" : "DSP tests passed\n", failures);
     return failures ? 1 : 0;
 }

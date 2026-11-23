@@ -42,6 +42,8 @@ object DspSettings {
             airPercent = p.getFloat("airPercent", d.airPercent),
             volumeDb = p.getFloat("volumeDb", d.volumeDb),
             softClip = p.getBoolean("softClip", d.softClip),
+            eqOn = p.getBoolean("eqOn", d.eqOn),
+            eq = p.getString("eqProfile", null)?.let { EqLibrary.decode(it).firstOrNull() } ?: d.eq,
             order = p.getString("order", null)?.split(',')
                 ?.mapNotNull { name -> DspProcessor.entries.firstOrNull { it.name == name } } ?: d.order,
         ).sanitized()
@@ -73,6 +75,8 @@ object DspSettings {
             .putFloat("volumeDb", new.volumeDb)
             .putBoolean("softClip", new.softClip)
             .putString("order", new.order.joinToString(",") { it.name })
+            .putBoolean("eqOn", new.eqOn)
+            .putString("eqProfile", EqLibrary.encode(listOf(new.eq)))
             .apply()
         listeners.forEach { it(old, new) }
     }

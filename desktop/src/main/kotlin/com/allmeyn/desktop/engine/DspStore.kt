@@ -3,6 +3,7 @@ package com.allmeyn.desktop.engine
 import com.allmeyn.player.dsp.DspMeters
 import com.allmeyn.player.dsp.DspParams
 import com.allmeyn.player.dsp.DspProcessor
+import com.allmeyn.player.dsp.EqLibrary
 import java.util.prefs.Preferences
 
 /**
@@ -32,6 +33,8 @@ object DspStore {
             airPercent = prefs.getFloat("airPercent", d.airPercent),
             volumeDb = prefs.getFloat("volumeDb", d.volumeDb),
             softClip = prefs.getBoolean("softClip", d.softClip),
+            eqOn = prefs.getBoolean("eqOn", d.eqOn),
+            eq = prefs.get("eqProfile", null)?.let { EqLibrary.decode(it).firstOrNull() } ?: d.eq,
             order = prefs.get("order", null)?.let(::parseOrder) ?: d.order,
         ).sanitized()
     }
@@ -55,6 +58,8 @@ object DspStore {
         prefs.putFloat("volumeDb", p.volumeDb)
         prefs.putBoolean("softClip", p.softClip)
         prefs.put("order", p.order.joinToString(",") { it.name })
+        prefs.putBoolean("eqOn", p.eqOn)
+        prefs.put("eqProfile", EqLibrary.encode(listOf(p.eq)))  // ≤ 20 filters: well under Preferences' 8 KB
     }
 
     /** Tells the engine (applies at once). */

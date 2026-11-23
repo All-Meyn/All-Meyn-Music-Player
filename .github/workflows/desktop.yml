@@ -8,6 +8,8 @@ on:
       - "app/src/main/java/com/allmeyn/player/library/Models.kt"   # compiled into the desktop app
       - "app/src/main/java/com/allmeyn/player/dsp/DspParams.kt"
       - "app/src/main/java/com/allmeyn/player/library/PlaylistOps.kt"
+      - "app/src/main/java/com/allmeyn/player/dsp/EqProfile.kt"
+      - "app/src/main/java/com/allmeyn/player/ui/HeadphoneEqEditor.kt"
       - "app/src/main/res/drawable/ic_brand_mark.xml"
       - "branding/**"
       - "scripts/build-ffmpeg-desktop.sh"
@@ -22,6 +24,8 @@ on:
       - "app/src/main/java/com/allmeyn/player/library/Models.kt"   # compiled into the desktop app
       - "app/src/main/java/com/allmeyn/player/dsp/DspParams.kt"
       - "app/src/main/java/com/allmeyn/player/library/PlaylistOps.kt"
+      - "app/src/main/java/com/allmeyn/player/dsp/EqProfile.kt"
+      - "app/src/main/java/com/allmeyn/player/ui/HeadphoneEqEditor.kt"
       - "app/src/main/res/drawable/ic_brand_mark.xml"
       - "branding/**"
       - "scripts/build-ffmpeg-desktop.sh"

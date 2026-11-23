@@ -594,6 +594,17 @@ static void testDsp() {
     dsp::Meters m{};
     check(player.dspMeters(m) && m.outputPeak > 0, "dsp: meters while processing", m.outputPeak);
 
+    // The headphone EQ alone (preamp -6.02 dB, no bands) counts as processing and halves too.
+    {
+        DspSettings eq;
+        eq.enabled = true;
+        eq.params.eqOn = true;
+        eq.params.eqPreampDb = -6.0206f;
+        check(eq.processes(), "dsp: the headphone EQ on its own counts as processing");
+        eq.params.eqOn = false;
+        check(!eq.processes(), "dsp: the headphone EQ off (nothing else on) = untouched");
+    }
+
     // Master off: untouched again, at once (same stream).
     half.enabled = false;
     player.setDsp(half);
