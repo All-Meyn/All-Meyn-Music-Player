@@ -11,6 +11,9 @@ dependencies {
     // Direct coordinates (the plugin's compose.* aliases are deprecated since 1.10).
     implementation("org.jetbrains.compose.desktop:desktop-jvm-windows-x64:1.12.2")
     implementation("org.jetbrains.compose.material3:material3:1.12.0-alpha03") // the Material3 aligned with 1.12.2
+    // Liquid Glass (Apache-2.0), the same version as the Android app; its desktop JVM (Skia) variant.
+    implementation("dev.shayxo.liquidglass:liquidglass:1.0.0")
+    implementation("dev.shayxo.liquidglass:liquidglass-material3:1.0.0")
     testImplementation(kotlin("test"))
 }
 

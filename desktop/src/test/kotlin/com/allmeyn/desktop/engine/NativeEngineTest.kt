@@ -79,5 +79,7 @@ class NativeEngineTest {
         println("Outputs: " + devices.joinToString { "${it.name} (${it.mixLabel})" })
         // Usually none on CI; proves the JNI link and the registry read are safe.
         println("ASIO drivers: " + NativeEngine.asioDriverNames())
+        // The default output's volume (a CI runner may have no audio device: then null).
+        println("Default output volume: " + DacVolume.from(NativeEngine.dacVolume("")))
     }
 }
