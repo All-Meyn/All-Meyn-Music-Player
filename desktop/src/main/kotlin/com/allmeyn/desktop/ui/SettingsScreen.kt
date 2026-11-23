@@ -36,12 +36,13 @@ import com.allmeyn.desktop.engine.OutputDevice
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
+import com.wexpa.liquidglass.material3.Button
+import com.wexpa.liquidglass.material3.OutlinedButton
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.RadioButton
-import androidx.compose.material3.Switch
+import com.wexpa.liquidglass.material3.Slider
+import com.wexpa.liquidglass.material3.Switch
 import com.allmeyn.desktop.engine.OutputSettings
 import com.allmeyn.desktop.engine.ReplayGainMode
 import com.allmeyn.desktop.library.DesktopLibrary
@@ -53,6 +54,8 @@ fun SettingsScreen(
     output: OutputSettings,
     onOutputChange: (OutputSettings) -> Unit,
     replayGain: ReplayGainMode,
+    backdrop: Int,
+    onBackdropChange: (Int) -> Unit,
     onReplayGainChange: (ReplayGainMode) -> Unit,
     onAddFolder: () -> Unit,
     onRemoveFolder: (String) -> Unit,
@@ -83,6 +86,20 @@ fun SettingsScreen(
                 }
             }
             OutputCard(output, onOutputChange)
+            Panel("Appearance") {
+                Row {
+                    Text("Background art", Modifier.weight(1f))
+                    Text(if (backdrop == 0) "Off" else "$backdrop %", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Slider(
+                    value = backdrop.toFloat(), valueRange = 0f..100f,
+                    onValueChange = { onBackdropChange((Math.round(it / 5f) * 5).coerceIn(0, 100)) },
+                )
+                Text(
+                    "How much of the playing song's cover shows behind the app (blurred, turning slowly while music plays).",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             Panel("Playback") {
                 Text("ReplayGain", fontWeight = FontWeight.Medium)
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -113,7 +130,11 @@ fun SettingsScreen(
 private fun Panel(title: String, content: @Composable () -> Unit) {
     Card(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        // Translucent, not glass (as Android's PanelCard): the background art shows through.
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f),
+            contentColor = MaterialTheme.colorScheme.onSurface,  // (not derivable from a translucent colour)
+        ),
     ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)

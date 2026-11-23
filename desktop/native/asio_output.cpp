@@ -100,7 +100,92 @@ long cbAsioMessage(long selector, long value, void*, double*) {
 }
 ASIOCallbacks g_callbacks{cbBufferSwitch, cbSampleRateDidChange, cbAsioMessage, cbBufferSwitchTimeInfo};
 
+// A driver loaded only to show its control panel (no stream playing on it).
+struct PanelHolder {
+    std::atomic<bool> quit{false};
+    std::promise<void> released;
+};
+std::mutex g_panelLock;
+std::shared_ptr<PanelHolder> g_panel;
+std::shared_future<void> g_panelReleased;
+
+/** Unloads the panel-only driver (before a stream loads a driver: one instance at a time). */
+void releasePanelDriver() {
+    std::shared_future<void> wait;
+    {
+        std::lock_guard<std::mutex> g(g_panelLock);
+        if (g_panel) {
+            g_panel->quit = true;
+            wait = g_panelReleased;
+            g_panel.reset();
+        }
+    }
+    if (wait.valid()) wait.wait_for(std::chrono::seconds(3));
+}
+
+/** Loads [clsid] (STA, this thread) and inits it; null + [error] if not. */
+IASIO* loadDriver(const CLSID& clsid, std::string& error) {
+    IASIO* d = nullptr;
+    if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, clsid, (void**) &d)) || !d) {
+        error = "Couldn't load the ASIO driver";
+        return nullptr;
+    }
+    if (!d->init(GetDesktopWindow())) {
+        char msg[128] = {};
+        d->getErrorMessage(msg);
+        error = std::string("The ASIO driver didn't start") + (msg[0] ? std::string(": ") + msg : std::string());
+        d->Release();
+        return nullptr;
+    }
+    return d;
+}
+
+void pumpMessages() {
+    MsgWaitForMultipleObjects(0, nullptr, FALSE, 20, QS_ALLINPUT);
+    MSG msg;
+    while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+}
+
 }  // namespace
+
+bool openAsioControlPanel(const std::string& driverName, std::string& error) {
+    {
+        // Playing on this driver: its control thread opens the panel.
+        std::lock_guard<std::mutex> g(g_activeLock);
+        if (AsioOutput* o = g_active.load()) {
+            if (o->driverName_ == driverName) { o->panelWanted_ = true; return true; }
+            error = "Another ASIO driver is playing";
+            return false;
+        }
+    }
+    CLSID clsid;
+    if (!driverClsid(driverName, clsid)) { error = "ASIO driver \"" + driverName + "\" isn't installed"; return false; }
+    releasePanelDriver();
+    auto holder = std::make_shared<PanelHolder>();
+    auto result = std::make_shared<std::promise<std::string>>();
+    auto opened = result->get_future();
+    {
+        std::lock_guard<std::mutex> g(g_panelLock);
+        g_panel = holder;
+        g_panelReleased = holder->released.get_future().share();
+    }
+    std::thread([holder, result, clsid] {
+        const bool com = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
+        std::string err;
+        IASIO* d = loadDriver(clsid, err);
+        if (d && d->controlPanel() != ASE_OK) err = "This ASIO driver has no control panel";
+        result->set_value(err);
+        while (d && err.empty() && !holder->quit) pumpMessages();
+        if (d) d->Release();
+        if (com) CoUninitialize();
+        holder->released.set_value();
+    }).detach();
+    error = opened.get();
+    return error.empty();
+}
 
 std::vector<std::string> listAsioDrivers() {
     std::vector<std::string> names;
@@ -179,16 +264,9 @@ void AsioOutput::run(std::shared_ptr<AsioOpenResult> result) {
     CLSID clsid;
     if (error.empty() && !driverClsid(driverName_, clsid)) error = "ASIO driver \"" + driverName_ + "\" isn't installed";
     if (error.empty()) {
+        releasePanelDriver();  // a driver loaded just for its panel: the stream needs it now
         // ASIO convention: the CLSID is also the interface ID.
-        if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, clsid, (void**) &driver_)) || !driver_) {
-            driver_ = nullptr;
-            error = "Couldn't load the ASIO driver";
-        }
-    }
-    if (error.empty() && !driver_->init(GetDesktopWindow())) {
-        char msg[128] = {};
-        driver_->getErrorMessage(msg);
-        error = std::string("The ASIO driver didn't start") + (msg[0] ? std::string(": ") + msg : std::string());
+        driver_ = loadDriver(clsid, error);
     }
     if (error.empty()) {
         driver_->getDriverName(driverName);
@@ -269,19 +347,18 @@ void AsioOutput::run(std::shared_ptr<AsioOpenResult> result) {
     }
     result->done.set_value(error);
 
-    // Keep the driver's window messages flowing until we're closed.
+    // Keep the driver's window messages flowing until we're closed; open its panel when asked.
     while (error.empty() && !quit_) {
-        MsgWaitForMultipleObjects(0, nullptr, FALSE, 20, QS_ALLINPUT);
-        MSG msg;
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
+        pumpMessages();
+        if (panelWanted_.exchange(false)) driver_->controlPanel();
     }
     if (started) driver_->stop();
     if (buffersCreated) driver_->disposeBuffers();
     if (driver_) { driver_->Release(); driver_ = nullptr; }
-    if (registered) g_active = nullptr;
+    if (registered) {
+        std::lock_guard<std::mutex> g(g_activeLock);
+        g_active = nullptr;
+    }
     if (comOwned) CoUninitialize();
 }
 

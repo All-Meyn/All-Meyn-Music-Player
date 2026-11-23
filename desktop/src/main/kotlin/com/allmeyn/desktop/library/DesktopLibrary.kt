@@ -31,6 +31,8 @@ class DesktopLibrary(private val dataDir: File = defaultDataDir()) {
     private val cacheFile = File(dataDir, "library.tsv")
     private val covers = CoverStore(File(dataDir, "covers"))
     val playlists = DesktopPlaylists(dataDir)
+    /** The queue saved between runs (QueueStore). */
+    val queueFile = File(dataDir, "queue.tsv")
 
     var folders by mutableStateOf(prefs.get(KEY_FOLDERS, "").split('\n').filter { it.isNotBlank() })
         private set

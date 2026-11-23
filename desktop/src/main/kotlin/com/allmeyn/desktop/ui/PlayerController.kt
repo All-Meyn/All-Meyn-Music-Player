@@ -6,6 +6,7 @@ import androidx.compose.runtime.setValue
 import com.allmeyn.desktop.engine.NativeEngine
 import com.allmeyn.desktop.engine.PlayState
 import com.allmeyn.desktop.engine.TrackInfo
+import com.allmeyn.desktop.library.QueueSnapshot
 import com.allmeyn.player.library.Track
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +67,28 @@ class PlayerController(private val scope: CoroutineScope) {
             index = start.coerceIn(0, tracks.lastIndex)
         }
         openCurrent()
+    }
+
+    /** The queue to save (null when empty). */
+    fun snapshot(): QueueSnapshot? =
+        if (queue.isEmpty()) null
+        else QueueSnapshot(queue.map { it.uri }, original?.map { it.uri }, index, positionMs, shuffle, repeat.name)
+
+    /**
+     * Brings back a saved queue (at start), paused at its position. Songs no longer in the library
+     * are left out; if the playing one is gone, the one now in its place starts from the beginning.
+     */
+    fun restore(s: QueueSnapshot, byUri: Map<String, Track>) {
+        if (current != null) return  // something already started
+        val kept = s.queue.mapIndexedNotNull { i, u -> byUri[u]?.let { i to it } }
+        if (kept.isEmpty()) return
+        val at = kept.indexOfFirst { it.first == s.index }
+        queue = kept.map { it.second }
+        index = if (at >= 0) at else kept.indexOfFirst { it.first > s.index }.takeIf { it >= 0 } ?: queue.lastIndex
+        shuffle = s.shuffle
+        original = if (s.shuffle) s.original?.mapNotNull { byUri[it] } ?: queue else null
+        repeat = RepeatMode.entries.firstOrNull { it.name == s.repeat } ?: RepeatMode.OFF
+        openCurrent(startMs = if (at >= 0) s.positionMs else 0, autoplay = false)
     }
 
     /** Shuffle on (the playing song stays, the rest are shuffled) / off (back to the list's order). */

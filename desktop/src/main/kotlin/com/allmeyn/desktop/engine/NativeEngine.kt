@@ -49,6 +49,12 @@ object NativeEngine {
      * exclusive (bit-perfect) or shared, DSD as DoP. ASIO tries native DSD first.
      */
     @JvmStatic external fun playerSetOutput(deviceId: String, exclusive: Boolean, dop: Boolean)
+    /** Opens the ASIO driver's own control panel; null if it opened, else why not. */
+    @JvmStatic external fun asioControlPanel(driverName: String): String?
+    /** The output's volume (DacVolume layout), "" = Windows' default; null if none. Off the UI thread. */
+    @JvmStatic external fun dacVolume(deviceId: String): FloatArray?
+    @JvmStatic external fun setDacVolume(deviceId: String, level: Float): Boolean
+    @JvmStatic external fun setDacMute(deviceId: String, muted: Boolean): Boolean
     /** ReplayGain for songs opened from now on: 0 off, 1 track, 2 album. */
     @JvmStatic external fun playerSetReplayGain(mode: Int)
     /** The DSP chain: master switch, values and order as DspParams.toNativeValues / toNativeOrder. Applies at once. */

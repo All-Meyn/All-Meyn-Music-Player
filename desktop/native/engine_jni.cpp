@@ -11,6 +11,7 @@
 
 #include "asio_output.h"
 #include "audio_devices.h"
+#include "endpoint_volume.h"
 #include "core/player.h"
 #include "core/tags.h"
 #include "folder_picker.h"
@@ -100,6 +101,34 @@ JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_outp
 /** Installed ASIO drivers, by name (open one with playerSetOutput("asio:" + name, ...)). */
 JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_asioDrivers(JNIEnv* env, jclass) {
     return toJava(env, allmeyn::listAsioDrivers());
+}
+
+/** Opens the ASIO driver's control panel; null if it opened, else why not. */
+JNIEXPORT jstring JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_asioControlPanel(JNIEnv* env, jclass, jstring driver) {
+    std::string error;
+    if (allmeyn::openAsioControlPanel(fromJava(env, driver), error)) return nullptr;
+    return env->NewStringUTF(error.c_str());
+}
+
+/**
+ * The output's volume ("" = Windows' default output): [level 0..1, dB, min dB, max dB, step dB,
+ * muted 0/1, hardware 0/1], or null if the device has none.
+ */
+JNIEXPORT jfloatArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_dacVolume(JNIEnv* env, jclass, jstring deviceId) {
+    const auto v = allmeyn::readEndpointVolume(fromJava(env, deviceId));
+    if (!v.ok) return nullptr;
+    const jfloat f[7] = {v.level, v.db, v.minDb, v.maxDb, v.stepDb, v.muted ? 1.0f : 0.0f, v.hardware ? 1.0f : 0.0f};
+    jfloatArray out = env->NewFloatArray(7);
+    if (out) env->SetFloatArrayRegion(out, 0, 7, f);
+    return out;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_setDacVolume(JNIEnv* env, jclass, jstring deviceId, jfloat level) {
+    return allmeyn::setEndpointVolume(fromJava(env, deviceId), level) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT jboolean JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_setDacMute(JNIEnv* env, jclass, jstring deviceId, jboolean muted) {
+    return allmeyn::setEndpointMute(fromJava(env, deviceId), muted == JNI_TRUE) ? JNI_TRUE : JNI_FALSE;
 }
 
 /**

@@ -20,7 +20,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.allmeyn.desktop.engine.DacVolume
+import com.allmeyn.desktop.engine.OutputSettings
 import com.allmeyn.desktop.engine.ReplayGainMode
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 /**
  * The playing song in full (as Android's Now Playing): big cover, title, artist · album, and where
@@ -28,7 +38,11 @@ import com.allmeyn.desktop.engine.ReplayGainMode
  * Opened by clicking the song in the player bar; clicking it again or Back returns.
  */
 @Composable
-fun NowPlayingScreen(player: PlayerController, replayGain: ReplayGainMode, onBack: () -> Unit) {
+fun NowPlayingScreen(player: PlayerController, replayGain: ReplayGainMode, output: OutputSettings, onBack: () -> Unit) {
+    var volume by remember(output.deviceId) { mutableStateOf<DacVolume?>(null) }
+    LaunchedEffect(output.deviceId) {
+        while (true) { volume = withContext(Dispatchers.IO) { DacVolume.read(output) }; delay(1000) }
+    }
     val track = player.current
     Column(Modifier.fillMaxSize().padding(28.dp)) {
         ScreenTitle("Now playing", onBack = onBack)
@@ -55,6 +69,11 @@ fun NowPlayingScreen(player: PlayerController, replayGain: ReplayGainMode, onBac
                         p.replayGainDb?.let { InfoLine("Gain", "ReplayGain " + ReplayGainMode.label(it, replayGain)) }
                     }
                     player.error?.let { InfoLine("Error", it) }
+                    volume?.let {
+                        InfoLine("Volume", if (it.hardware) "${it.label} · the DAC's own volume (samples untouched)" else "${it.label} · Windows mixer (shared mode only)")
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    VolumeControl(output, sliderWidth = 260.dp)
                     if (player.queue.size > 1) {
                         val next = player.queue.getOrNull(player.index + 1)
                         InfoLine("Queue", "${player.index + 1} of ${player.queue.size}" + (next?.let { " · next: ${it.title}" } ?: ""))

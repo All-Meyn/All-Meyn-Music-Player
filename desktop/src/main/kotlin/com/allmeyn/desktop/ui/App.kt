@@ -34,6 +34,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -44,6 +45,10 @@ import com.allmeyn.desktop.engine.ReplayGainMode
 import com.allmeyn.desktop.engine.PlayState
 import com.allmeyn.desktop.engine.TrackInfo
 import com.allmeyn.desktop.library.DesktopLibrary
+import com.wexpa.liquidglass.material3.Surface as GlassSurface
+import com.allmeyn.desktop.library.QueueStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.allmeyn.player.library.Track
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -60,10 +65,28 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
     val scope = rememberCoroutineScope()
     var output by remember { mutableStateOf(OutputSettings.load().also { it.apply() }) }
     var replayGain by remember { mutableStateOf(ReplayGainMode.load().also { it.apply(output) }) }
+    var backdrop by remember { mutableStateOf(BackdropSettings.strength()) }
     var dsp by remember { mutableStateOf(DspStore.load().also(DspStore::apply)) }
     val stack = remember { mutableStateListOf<Route>(Route.Albums) }
     var query by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { library.start() }
+    // The queue comes back as it was (paused), once the library is there; then it's saved as it
+    // changes (the position at most every 10 s while playing) and when the app closes.
+    LaunchedEffect(library.loaded) {
+        if (!library.loaded) return@LaunchedEffect
+        withContext(Dispatchers.IO) { QueueStore.read(library.queueFile) }?.let { player.restore(it, library.view.byUri) }
+        var saved = player.snapshot()
+        while (true) {
+            delay(2000)
+            val now = player.snapshot()
+            val changed = now?.copy(positionMs = 0) != saved?.copy(positionMs = 0) ||
+                kotlin.math.abs((now?.positionMs ?: 0) - (saved?.positionMs ?: 0)) >= 10_000
+            if (changed) {
+                saved = now
+                withContext(Dispatchers.IO) { if (now == null) library.queueFile.delete() else QueueStore.write(library.queueFile, now) }
+            }
+        }
+    }
     LaunchedEffect(player) {
         while (true) {
             player.refresh()
@@ -82,11 +105,14 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
     var addingToPlaylist by remember { mutableStateOf<List<Track>?>(null) }
 
     CompositionLocalProvider(LocalAddToPlaylist provides { tracks -> if (tracks.isNotEmpty()) addingToPlaylist = tracks }) {
+    // The playing song's cover, blurred and slowly turning, behind everything (the glass refracts it).
+    ArtBackdrop(player.current?.art.orEmpty(), backdrop, playing = player.state == PlayState.PLAYING)
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.weight(1f)) {
             // ---- sidebar ----
             Column(
-                Modifier.width(230.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow).padding(16.dp),
+                // Translucent (not glass): the background art shows through, nothing to re-record.
+                Modifier.width(230.dp).fillMaxHeight().background(MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.6f)).padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 12.dp)) {
@@ -105,7 +131,7 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                         color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                         fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
                         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-                            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceContainerLow)
+                            .background(if (selected) MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.35f) else Color.Transparent)
                             .clickable { go(route) }.padding(horizontal = 12.dp, vertical = 9.dp),
                     )
                 }
@@ -139,7 +165,7 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                         Route.Playlists -> PlaylistsScreen(library.playlists, view, onOpen = { push(Route.PlaylistPage(it.id)) })
                         is Route.PlaylistPage -> library.playlists.all.firstOrNull { it.id == route.id }
                             ?.let { PlaylistPage(it, library.playlists, view, player, onBack = ::back) } ?: Missing(::back)
-                        Route.NowPlaying -> NowPlayingScreen(player, replayGain, onBack = { if (stack.size > 1) back() else go(Route.Albums) })
+                        Route.NowPlaying -> NowPlayingScreen(player, replayGain, output, onBack = { if (stack.size > 1) back() else go(Route.Albums) })
                         Route.Dsp -> DspScreen(dsp) { change ->
                             val old = dsp
                             val new = change(old).sanitized()
@@ -162,6 +188,8 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                                 player.reopen()  // hear the change now, from the same spot
                             },
                             replayGain = replayGain,
+                            backdrop = backdrop,
+                            onBackdropChange = { backdrop = it; BackdropSettings.setStrength(it) },
                             onReplayGainChange = { mode ->
                                 replayGain = mode
                                 mode.save()
@@ -177,7 +205,7 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
             }
         }
         PlayerBar(
-            player, onOpenQueue = { go(Route.Queue) },
+            player, output, onOpenQueue = { go(Route.Queue) },
             // The song in the bar opens it in full; again = back to where you were.
             onOpenNowPlaying = {
                 if (query.isBlank() && stack.last() == Route.NowPlaying) back()
@@ -198,10 +226,13 @@ private fun Missing(onBack: () -> Unit) {
 
 /** Now playing, the transport controls and the seek bar. */
 @Composable
-fun PlayerBar(player: PlayerController, onOpenQueue: () -> Unit, onOpenNowPlaying: () -> Unit) {
+fun PlayerBar(player: PlayerController, output: OutputSettings, onOpenQueue: () -> Unit, onOpenNowPlaying: () -> Unit) {
     val track = player.current
+    // A floating glass bar, as the Android mini player; its own controls are plain Material (they
+    // draw on the glass, so no glass sits inside glass).
+    GlassSurface(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp).height(92.dp), shape = RoundedCornerShape(26.dp)) {
     Row(
-        Modifier.fillMaxWidth().height(92.dp).background(MaterialTheme.colorScheme.surfaceContainer).padding(horizontal = 16.dp),
+        Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Row(
@@ -253,14 +284,16 @@ fun PlayerBar(player: PlayerController, onOpenQueue: () -> Unit, onOpenNowPlayin
                 Text(TrackInfo.formatTime(player.durationMs), style = MaterialTheme.typography.labelSmall, modifier = Modifier.width(44.dp))
             }
         }
-        Row(Modifier.width(300.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.width(320.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
                 player.playing?.let { p ->
                     Text(p.formatLabel, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary, maxLines = 1)
-                    Text(p.output, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, textAlign = TextAlign.End)
+                    Text(p.output, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End)
                 }
+                VolumeControl(output, sliderWidth = 130.dp)
             }
             IconButton(onClick = onOpenQueue) { ControlGlyph(ControlIcon.QUEUE, MaterialTheme.colorScheme.onSurfaceVariant, 18.dp) }
         }
+    }
     }
 }

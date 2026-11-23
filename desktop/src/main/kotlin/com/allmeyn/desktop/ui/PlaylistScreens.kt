@@ -16,11 +16,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
+import com.wexpa.liquidglass.material3.AlertDialog
+import com.wexpa.liquidglass.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
+import com.wexpa.liquidglass.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -154,7 +154,8 @@ fun AddToPlaylistDialog(tracks: List<Track>, playlists: DesktopPlaylists, onDone
             Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(name, { name = it }, singleLine = true, placeholder = { Text("New playlist") }, modifier = Modifier.weight(1f))
-                    Button(onClick = {
+                    // (Plain buttons inside the glass dialog: it is itself the glass.)
+                    TextButton(onClick = {
                         playlists.create(name, tracks.map { it.uri })
                         onDone(name.trim().ifEmpty { "Playlist" })
                     }) { Text("Create") }

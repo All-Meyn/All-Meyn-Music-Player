@@ -74,6 +74,7 @@ if(WIN32)
         folder_picker.cpp
         wasapi_output.cpp
         asio_output.cpp
+        endpoint_volume.cpp
     )
     target_include_directories(allmeyn_desktop PRIVATE
         "${JDK_INCLUDE}"

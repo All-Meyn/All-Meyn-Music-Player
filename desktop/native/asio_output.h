@@ -24,6 +24,13 @@ struct AsioOpenResult;
 /** Installed ASIO drivers (HKLM\SOFTWARE\ASIO), by name. */
 std::vector<std::string> listAsioDrivers();
 
+/**
+ * Opens [driverName]'s own control panel (buffer size, the DAC's settings). If that driver is
+ * playing, through the playing stream; otherwise the driver is loaded just for the panel and kept
+ * loaded until a stream needs it (some panels close with their driver). False + [error] if not.
+ */
+bool openAsioControlPanel(const std::string& driverName, std::string& error);
+
 class AsioOutput final : public Output {
 public:
     explicit AsioOutput(std::string driverName) : driverName_(std::move(driverName)) {}
@@ -45,6 +52,8 @@ private:
     std::thread thread_;
     std::atomic<bool> quit_{false};
     std::atomic<bool> wantRunning_{false};
+    std::atomic<bool> panelWanted_{false};  // open the control panel from the control thread
+    friend bool openAsioControlPanel(const std::string&, std::string&);
     int64_t buffered_ = 0;     // set before open() returns
     std::string description_;  // set before open() returns
 

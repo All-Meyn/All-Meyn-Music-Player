@@ -20,9 +20,9 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
+import com.wexpa.liquidglass.material3.OutlinedButton
+import com.wexpa.liquidglass.material3.Slider
+import com.wexpa.liquidglass.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -183,7 +183,13 @@ private fun signed(v: Float) = if (v > 0f) "+%.1f".format(v).removeSuffix(".0") 
 
 @Composable
 private fun Section(title: String?, on: Boolean = true, toggle: ((Boolean) -> Unit)? = null, content: @Composable () -> Unit) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.72f),
+            contentColor = MaterialTheme.colorScheme.onSurface,  // (not derivable from a translucent colour)
+        ),
+    ) {
         Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (title != null) Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
