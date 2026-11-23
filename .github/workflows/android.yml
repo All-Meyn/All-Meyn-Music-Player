@@ -54,7 +54,7 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v5
 
-      - name: Build debug APK, unit tests, lint (and the release APK, unsigned: the release config builds)
+      - name: Build debug APK, unit tests, lint, and the unsigned release APK
         run: ./gradlew --no-daemon assembleDebug testDebugUnitTest lintDebug assembleRelease
 
       - name: Check the FFmpeg decoders are linked into the APK
