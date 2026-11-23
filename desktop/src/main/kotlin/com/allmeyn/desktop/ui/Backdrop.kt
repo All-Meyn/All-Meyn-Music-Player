@@ -157,8 +157,7 @@ private fun blurredThumbnail(path: String): ImageBitmap? {
         bytes[i * 4] = (c and 0xFF).toByte(); bytes[i * 4 + 1] = ((c shr 8) and 0xFF).toByte()
         bytes[i * 4 + 2] = ((c shr 16) and 0xFF).toByte(); bytes[i * 4 + 3] = 0xFF.toByte()
     }
-    bitmap.installPixels(info, bytes, w * 4)
-    return bitmap.toComposeImageBitmap()
+    return Image.makeRaster(info, bytes, w * 4).toComposeImageBitmap()
 }
 
 /** One horizontal then one vertical box blur of opaque ARGB pixels, edges clamped (the Android app's boxBlur). */
