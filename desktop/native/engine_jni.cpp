@@ -2,6 +2,8 @@
 // What the engine was built with, the Windows outputs, and the player (one song at a time).
 #include <jni.h>
 
+#include <cmath>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -181,9 +183,16 @@ JNIEXPORT jint JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerTrackS
 JNIEXPORT jobjectArray JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerInfo(JNIEnv* env, jclass) {
     std::lock_guard<std::mutex> g(g_lock);
     const auto i = player().info();
+    char gain[16] = "";
+    if (!std::isnan(i.replayGainDb)) snprintf(gain, sizeof gain, "%.2f", i.replayGainDb);
     return toJava(env, std::vector<std::string>{
         i.codec, std::to_string(i.sampleRate), std::to_string(i.channels), std::to_string(i.bitsPerSample),
-        std::to_string(i.totalFrames), i.title, i.artist, i.album, player().outputDescription(), i.path});
+        std::to_string(i.totalFrames), i.title, i.artist, i.album, player().outputDescription(), i.path, gain});
+}
+
+/** ReplayGain for songs opened from now on: 0 off, 1 track, 2 album (the app sends 0 for bit-perfect outputs). */
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetReplayGain(JNIEnv*, jclass, jint mode) {
+    player().setReplayGain(mode == 1 ? allmeyn::ReplayGainMode::Track : mode == 2 ? allmeyn::ReplayGainMode::Album : allmeyn::ReplayGainMode::Off);
 }
 
 JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerPlay(JNIEnv*, jclass) {

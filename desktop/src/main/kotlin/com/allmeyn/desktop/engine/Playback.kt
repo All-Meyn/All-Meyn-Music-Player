@@ -19,6 +19,7 @@ data class TrackInfo(
     val artist: String,
     val album: String,
     val output: String,
+    val replayGainDb: Float? = null,  // ReplayGain applied to this song (null = none)
 ) {
     val durationMs: Long get() = if (sampleRate > 0) totalFrames * 1000 / sampleRate else 0
 
@@ -38,14 +39,15 @@ data class TrackInfo(
     }
 
     companion object {
-        /** From the engine's playerInfo(); the file is its last field. */
+        /** From the engine's playerInfo(): 11 fields (the 11th, ReplayGain dB, may be empty). */
         fun from(f: Array<String>): TrackInfo? {
-            if (f.size != 10) return null
+            if (f.size != 11) return null
             val file = File(f[9])
             return TrackInfo(
                 file = file, codec = f[0], sampleRate = f[1].toIntOrNull() ?: 0, channels = f[2].toIntOrNull() ?: 0,
                 bits = f[3].toIntOrNull() ?: 0, totalFrames = f[4].toLongOrNull() ?: 0,
                 title = f[5], artist = f[6], album = f[7], output = f[8],
+                replayGainDb = f[10].toFloatOrNull(),
             )
         }
 

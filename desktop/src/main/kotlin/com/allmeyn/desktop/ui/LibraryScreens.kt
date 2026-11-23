@@ -53,12 +53,14 @@ sealed interface Route {
     data object Songs : Route
     data class Folders(val path: String = "") : Route
     data object Queue : Route
+    data object Playlists : Route
+    data class PlaylistPage(val id: String) : Route
     data object Dsp : Route
     data object NowPlaying : Route
     data object Settings : Route
 }
 
-private val CONTENT_PADDING = PaddingValues(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 24.dp)
+internal val CONTENT_PADDING = PaddingValues(start = 28.dp, end = 28.dp, top = 24.dp, bottom = 24.dp)
 
 @Composable
 fun ScreenTitle(text: String, onBack: (() -> Unit)? = null) {
@@ -152,9 +154,11 @@ fun AlbumPage(album: Album, player: PlayerController, onBack: () -> Unit) {
 
 @Composable
 fun PlayShuffle(tracks: List<Track>, player: PlayerController) {
+    val addTo = LocalAddToPlaylist.current
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 8.dp)) {
         Button(onClick = { player.play(tracks) }) { Text("Play") }
         OutlinedButton(onClick = { player.play(tracks, shuffle = true) }) { Text("Shuffle") }
+        TextButton(onClick = { addTo(tracks) }) { Text("Add to playlist…") }
     }
 }
 
@@ -246,6 +250,8 @@ fun QueueScreen(player: PlayerController) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) { ScreenTitle("Queue") }
+                val addTo = LocalAddToPlaylist.current
+                if (player.queue.isNotEmpty()) TextButton(onClick = { addTo(player.queue) }) { Text("Save as playlist…") }
                 if (player.queue.size > 1) OutlinedButton(onClick = player::clearOthers) { Text("Clear others") }
             }
             if (player.queue.isEmpty()) Text("Nothing queued. Play an album or a song from your library.", color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -266,6 +272,7 @@ fun QueueScreen(player: PlayerController) {
 /** Rows for [tracks]; a click plays them all from that song; right-click: play next / add to queue. */
 fun LazyListScope.trackList(tracks: List<Track>, player: PlayerController, showAlbum: Boolean, numbered: Boolean) {
     itemsIndexed(tracks, key = { i, t -> "$i:${t.uri}" }) { i, track ->
+        val addTo = LocalAddToPlaylist.current
         TrackRow(
             track, number = if (numbered) track.trackNo.takeIf { it > 0 } ?: (i + 1) else null, showAlbum = showAlbum,
             current = player.current?.uri == track.uri,
@@ -274,6 +281,7 @@ fun LazyListScope.trackList(tracks: List<Track>, player: PlayerController, showA
                 listOf(
                     ContextMenuItem("Play next") { player.playNext(track) },
                     ContextMenuItem("Add to queue") { player.addToQueue(track) },
+                    ContextMenuItem("Add to playlist…") { addTo(listOf(track)) },
                 )
             },
         )

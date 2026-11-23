@@ -30,6 +30,14 @@ class EngineDataTest {
         assertTrue(!shared.isAsio && !shared.dopPossible)
     }
 
+    @Test fun replayGainOnlyForSharedOutputAndLabels() {
+        assertEquals(true, ReplayGainMode.appliesTo(OutputSettings(deviceId = "", exclusive = false)))
+        assertEquals(false, ReplayGainMode.appliesTo(OutputSettings(deviceId = "", exclusive = true)))
+        assertEquals(false, ReplayGainMode.appliesTo(OutputSettings(deviceId = OutputSettings.asioId("X"), exclusive = false)))
+        assertEquals("-6.2 dB (album)", ReplayGainMode.label(-6.2f, ReplayGainMode.ALBUM))
+        assertEquals("+1.5 dB (track), not boosted", ReplayGainMode.label(1.5f, ReplayGainMode.TRACK))
+    }
+
     @Test fun formatsRates() {
         assertEquals("44.1 kHz", OutputDevice.formatRate(44100))
         assertEquals("352.8 kHz", OutputDevice.formatRate(352800))

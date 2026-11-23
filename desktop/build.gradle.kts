@@ -17,7 +17,7 @@ dependencies {
 // The library model (Track, Album, Artist, folders, sorting, search) is the Android app's own pure
 // Kotlin file, compiled here as well: both apps group, sort and search the library the same way.
 val sharedSources = tasks.register<Sync>("sharedSources") {
-    from("../app/src/main/java") { include("com/allmeyn/player/library/Models.kt", "com/allmeyn/player/dsp/DspParams.kt") }
+    from("../app/src/main/java") { include("com/allmeyn/player/library/Models.kt", "com/allmeyn/player/dsp/DspParams.kt", "com/allmeyn/player/library/PlaylistOps.kt") }
     into(layout.buildDirectory.dir("shared-src"))
 }
 kotlin.sourceSets.main { kotlin.srcDir(sharedSources) }
