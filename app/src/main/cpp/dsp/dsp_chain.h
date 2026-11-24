@@ -11,6 +11,11 @@
 // the empty band above it; the cutoff comes from the file's bitrate (setSource) and is confirmed
 // or corrected by CutoffDetector.
 //
+// Headphone EQ (parametric, after the processors and before the output stage): up to kMaxEqBands
+// RBJ-cookbook biquads (peak, low/high shelf, low/high pass) plus a preamp, in double precision so
+// low shelves stay exact at high sample rates. The same filters AutoEq and EqualizerAPO use, so an
+// imported ParametricEQ.txt sounds as intended.
+//
 // The maths and constants are ported from Tetra-Expand (github.com/All-Meyn/Tri-Expand,
 // Source/DSP/MultiBandExpander.* and ExpanderConstants.h, GPLv3) without JUCE: the
 // Linkwitz-Riley filters reproduce juce::dsp::LinkwitzRileyFilter's TPT structure and the
@@ -26,6 +31,19 @@ namespace allmeyn::dsp {
 
 constexpr int kBands = 4;
 constexpr int kMaxChannels = 2;
+
+constexpr int kMaxEqBands = 20;
+
+/** Headphone EQ filter types (EqualizerAPO PK, LSC, HSC, LPQ, HPQ). */
+enum EqType : int { kEqPeak = 0, kEqLowShelf = 1, kEqHighShelf = 2, kEqLowPass = 3, kEqHighPass = 4 };
+
+struct EqBand {
+    int   type = kEqPeak;
+    float freqHz = 1000.0f;
+    float gainDb = 0.0f;   // peak and shelves only
+    float q = 0.707f;
+    bool operator==(const EqBand& o) const { return type == o.type && freqHz == o.freqHz && gainDb == o.gainDb && q == o.q; }
+};
 
 /** Which processor sits in a chain slot. */
 enum Processor : int { kCompander = 0, kBass = 1, kImpact = 2, kVocal = 3, kNumProcessors = 4 };
@@ -49,6 +67,11 @@ struct Params {
     float presencePercent = 50.0f;   // 0..100: consonant / attack lift in the vocal band
     float detailPercent = 50.0f;     // 0..100: upward expansion of the quiet vocal band
     float airPercent = 25.0f;        // 0..100: harmonics and lift above ~9 kHz
+    // Headphone EQ (after the processors, before the output stage)
+    bool  eqOn = false;
+    float eqPreampDb = 0.0f;         // -30..+10, usually negative to leave headroom for boosts
+    int   eqBandCount = 0;           // 0..kMaxEqBands
+    EqBand eqBands[kMaxEqBands];
     // Output
     float volumeDb = 0.0f;           // -40..+10
     bool  softClip = false;
@@ -125,6 +148,23 @@ private:
     float b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0, z1 = 0, z2 = 0;
 };
 
+/** One RBJ-cookbook biquad in double precision, transposed direct form II, per channel. */
+struct EqFilter {
+    double b0 = 1, b1 = 0, b2 = 0, a1 = 0, a2 = 0;
+    double z1[kMaxChannels] {}, z2[kMaxChannels] {};
+    /** Coefficients for [band] at [sampleRate]; keeps the state (no click when a band is adjusted). */
+    void design(const EqBand& band, double sampleRate);
+    double process(int ch, double x) {
+        const double y = b0 * x + z1[ch];
+        z1[ch] = b1 * x - a1 * y + z2[ch];
+        z2[ch] = b2 * x - a2 * y;
+        return y;
+    }
+    void reset() { for (int c = 0; c < kMaxChannels; c++) z1[c] = z2[c] = 0; }
+    /** Magnitude in dB at [hz] (for tests and the UI's curve). */
+    double magnitudeDb(double hz, double sampleRate) const;
+};
+
 /**
  * Finds a lossy codec's treble cutoff: a cliff in the spectrum above which there's (almost)
  * nothing. Hann-windowed Goertzel probes at 10, 11 ... 21 kHz measure ~50 ms windows; their power
@@ -194,6 +234,7 @@ private:
     void runBass(float x[kMaxChannels], int n);
     void runImpact(float x[kMaxChannels], int n);
     void runVocal(float x[kMaxChannels], int n);
+    void runEq(float x[kMaxChannels], int n);
 public:
     /** The song's source, from the file: see CutoffDetector::setSource. */
     void setSource(bool lossy, float priorCutoffHz) { cutoffDet.setSource(lossy, priorCutoffHz); }
@@ -228,6 +269,13 @@ private:
     // Set when a processor was skipped (off) or the chain was reset: on its next run it starts from
     // fresh filters and neutral detectors (unity gain, no false impact), not from stale or silent state.
     bool compFresh = true, bassFresh = true, impFresh = true, vocFresh = true;
+
+    // Headphone EQ
+    EqFilter eqFilters[kMaxEqBands];
+    EqBand eqDesigned[kMaxEqBands];
+    int eqCount = 0;
+    Smoothed eqMix, eqPreamp;
+    bool eqFresh = true;
 
     int order[kNumProcessors] = {kVocal, kCompander, kBass, kImpact};
     Meters m {};

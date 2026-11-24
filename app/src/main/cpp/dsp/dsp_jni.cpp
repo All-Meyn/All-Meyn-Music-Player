@@ -6,9 +6,13 @@
 
 #include "dsp_chain.h"
 
+#include <algorithm>
+
 using allmeyn::dsp::Chain;
 using allmeyn::dsp::kMeterCount;
 using allmeyn::dsp::kNumProcessors;
+using allmeyn::dsp::EqBand;
+using allmeyn::dsp::kMaxEqBands;
 using allmeyn::dsp::Params;
 
 namespace {
@@ -33,14 +37,16 @@ JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_reset(JNIEnv*, jcla
 /**
  * values: [companderOn, expansion%, transitionDb, hfTransitionDb, bassOn, bass%, bassTransitionDb,
  *          impactOn, impact%, impactReleaseMs, volumeDb, softClip, vocalOn, presence%, detail%,
- *          air%]; order: kNumProcessors processor ids.
+ *          air%, eqOn, eqPreampDb, eqBandCount, (eqType, Hz, dB, Q) x eqBandCount];
+ * order: kNumProcessors processor ids.
  */
 JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_setParams(JNIEnv* env, jclass, jlong h, jfloatArray values, jintArray order) {
-    constexpr int kValues = 16;
-    if (h == 0 || env->GetArrayLength(values) < kValues || env->GetArrayLength(order) < kNumProcessors) return;
-    jfloat v[kValues];
+    constexpr int kValues = 16, kEqHead = 3, kMaxValues = kValues + kEqHead + 4 * kMaxEqBands;
+    const jsize length = h == 0 ? 0 : env->GetArrayLength(values);
+    if (h == 0 || length < kValues || env->GetArrayLength(order) < kNumProcessors) return;
+    jfloat v[kMaxValues] = {};
     jint o[kNumProcessors];
-    env->GetFloatArrayRegion(values, 0, kValues, v);
+    env->GetFloatArrayRegion(values, 0, std::min<jsize>(length, kMaxValues), v);
     env->GetIntArrayRegion(order, 0, kNumProcessors, o);
     Params p;
     p.companderOn = v[0] != 0;
@@ -59,6 +65,17 @@ JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_setParams(JNIEnv* e
     p.presencePercent = v[13];
     p.detailPercent = v[14];
     p.airPercent = v[15];
+    // Headphone EQ: [on, preampDb, bandCount, (type, Hz, dB, Q) x bandCount]
+    if (length >= kValues + kEqHead) {
+        p.eqOn = v[16] != 0;
+        p.eqPreampDb = v[17];
+        const int n = std::clamp((int) v[18], 0, std::min(kMaxEqBands, (int) (std::min<jsize>(length, kMaxValues) - kValues - kEqHead) / 4));
+        p.eqBandCount = n;
+        for (int i = 0; i < n; i++) {
+            const jfloat* b = v + kValues + kEqHead + 4 * i;
+            p.eqBands[i] = EqBand{(int) b[0], b[1], b[2], b[3]};
+        }
+    }
     for (int i = 0; i < kNumProcessors; i++) p.order[i] = o[i];
     chainOf(h)->setParams(p);
 }

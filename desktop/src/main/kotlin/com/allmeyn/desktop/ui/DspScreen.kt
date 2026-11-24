@@ -40,6 +40,15 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.allmeyn.desktop.engine.DspStore
+import com.allmeyn.desktop.library.DesktopEqProfiles
+import com.allmeyn.player.dsp.EqParser
+import com.allmeyn.player.ui.HeadphoneEqEditor
+import java.awt.FileDialog
+import java.awt.Frame
+import java.awt.Toolkit
+import java.awt.datatransfer.DataFlavor
+import java.awt.datatransfer.StringSelection
+import java.io.File
 import com.allmeyn.player.dsp.DspMeters
 import com.allmeyn.player.dsp.DspParams
 import com.allmeyn.player.dsp.DspProcessor
@@ -66,6 +75,18 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
         }
     }
     val p = params
+    val eqStore = remember { DesktopEqProfiles() }
+    var savedEqs by remember { mutableStateOf(eqStore.load()) }
+    var eqNotes by remember { mutableStateOf<List<String>>(emptyList()) }
+    fun importEq(text: String, name: String) {
+        try {
+            val r = EqParser.parse(text, name)
+            onChange { it.copy(eq = r.profile, eqOn = true) }
+            eqNotes = listOf("Imported ${r.profile.bands.size} filters.") + r.notes
+        } catch (e: IllegalArgumentException) {
+            eqNotes = listOf(e.message ?: "Couldn't read that EQ.")
+        }
+    }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
         Column(
             Modifier.widthIn(max = 760.dp).fillMaxWidth().verticalScroll(rememberScrollState()).padding(28.dp),
@@ -143,6 +164,36 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
                     }
                     DspProcessor.VOCAL -> Unit
                 }
+            }
+            Section("Headphone EQ", on = p.enabled && p.eqActive) {
+                HeadphoneEqEditor(
+                    on = p.eqOn, profile = p.eq, notes = eqNotes, saved = savedEqs,
+                    onOn = { v -> onChange { it.copy(eqOn = v) } },
+                    onProfile = { e -> eqNotes = emptyList(); onChange { it.copy(eq = e) } },
+                    onImportFile = {
+                        val dialog = FileDialog(null as Frame?, "Import EQ (ParametricEQ.txt)", FileDialog.LOAD)
+                        dialog.isVisible = true  // modal
+                        val dir = dialog.directory
+                        val name = dialog.file
+                        if (dir != null && name != null) {
+                            val text = runCatching { File(dir, name).readText() }.getOrNull()
+                            if (text == null) eqNotes = listOf("Couldn't open that file.")
+                            else importEq(text, name.substringBeforeLast('.').removeSuffix(" ParametricEQ").removeSuffix(" FixedBandEQ"))
+                        }
+                    },
+                    onPaste = {
+                        val text = runCatching {
+                            Toolkit.getDefaultToolkit().systemClipboard.getData(DataFlavor.stringFlavor) as? String
+                        }.getOrNull()
+                        if (text.isNullOrBlank()) eqNotes = listOf("The clipboard has no text.") else importEq(text, "")
+                    },
+                    onCopy = {
+                        Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(p.eq.toApoText()), null)
+                        eqNotes = listOf("Copied as EqualizerAPO text.")
+                    },
+                    onSave = { savedEqs = eqStore.save(p.eq); eqNotes = listOf("Saved “${p.eq.name}”.") },
+                    onDelete = { name -> savedEqs = eqStore.delete(name) },
+                )
             }
             Section("Output", on = p.enabled) {
                 LabeledSlider("Volume", "${signed(p.volumeDb)} dB", p.volumeDb, -40f..10f, 0.5f) { v -> onChange { it.copy(volumeDb = v) } }

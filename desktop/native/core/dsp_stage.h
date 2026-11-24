@@ -25,7 +25,8 @@ struct DspSettings {
     /** Whether the chain changes the audio at all (master on and something to do). */
     bool processes() const {
         return enabled && (params.companderOn || params.bassOn || params.impactOn || params.vocalOn ||
-                           params.volumeDb != 0.0f || params.softClip);
+                           params.volumeDb != 0.0f || params.softClip ||
+                           (params.eqOn && (params.eqBandCount > 0 || params.eqPreampDb != 0.0f)));
     }
 };
 

@@ -37,6 +37,14 @@ import com.allmeyn.player.dsp.DspMeters
 import com.allmeyn.player.dsp.DspParams
 import com.allmeyn.player.dsp.DspProcessor
 import com.allmeyn.player.dsp.DspSettings
+import com.allmeyn.player.dsp.EqParser
+import com.allmeyn.player.dsp.EqProfileStore
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.delay
 import kotlin.math.log10
 import kotlin.math.roundToInt
@@ -57,6 +65,30 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
         }
     }
     val p = params
+    val context = LocalContext.current
+    val eqStore = remember { EqProfileStore(context.applicationContext) }
+    var savedEqs by remember { mutableStateOf(eqStore.load()) }
+    var eqNotes by remember { mutableStateOf<List<String>>(emptyList()) }
+    fun importEq(text: String, name: String) {
+        try {
+            val r = EqParser.parse(text, name)
+            onChange { it.copy(eq = r.profile, eqOn = true) }
+            eqNotes = listOf("Imported ${r.profile.bands.size} filters.") + r.notes
+        } catch (e: IllegalArgumentException) {
+            eqNotes = listOf(e.message ?: "Couldn't read that EQ.")
+        }
+    }
+    val openEq = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+            if (c.moveToFirst()) c.getString(0) else null
+        }.orEmpty().substringBeforeLast('.').removeSuffix(" ParametricEQ").removeSuffix(" FixedBandEQ")
+        val text = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes().take(1_000_000).toByteArray().decodeToString() }
+        }.getOrNull()
+        if (text == null) eqNotes = listOf("Couldn't open that file.") else importEq(text, name)
+    }
+    val clipboard = remember { context.getSystemService(ClipboardManager::class.java) }
     val listState = rememberLazyListState()
     // The processor order is the draggable part of the list; everything else is fixed items.
     // Vocal & Detail Restoration is pinned first, so only the others are draggable.
@@ -153,6 +185,26 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
                         color = MaterialTheme.colorScheme.primary,
                     )
                 }
+            }
+        }
+        item(key = "eq") {
+            Section("Headphone EQ", on = p.enabled && p.eqActive) {
+                HeadphoneEqEditor(
+                    on = p.eqOn, profile = p.eq, notes = eqNotes, saved = savedEqs,
+                    onOn = { v -> onChange { it.copy(eqOn = v) } },
+                    onProfile = { e -> eqNotes = emptyList(); onChange { it.copy(eq = e) } },
+                    onImportFile = { openEq.launch(arrayOf("text/*", "application/octet-stream")) },
+                    onPaste = {
+                        val text = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+                        if (text.isNullOrBlank()) eqNotes = listOf("The clipboard has no text.") else importEq(text, "")
+                    },
+                    onCopy = {
+                        clipboard?.setPrimaryClip(ClipData.newPlainText("EQ", p.eq.toApoText()))
+                        eqNotes = listOf("Copied as EqualizerAPO text.")
+                    },
+                    onSave = { savedEqs = eqStore.save(p.eq); eqNotes = listOf("Saved “${p.eq.name}”.") },
+                    onDelete = { name -> savedEqs = eqStore.delete(name) },
+                )
             }
         }
         item(key = "output") {

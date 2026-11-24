@@ -35,6 +35,9 @@ data class DspParams(
     val airPercent: Float = 25f,         // 0..100
     val volumeDb: Float = 0f,            // -40..+10
     val softClip: Boolean = false,
+    /** Headphone EQ (parametric, after the processors and before Volume / Soft Clip). */
+    val eqOn: Boolean = false,
+    val eq: EqProfile = EqProfile(),
     val order: List<DspProcessor> = listOf(DspProcessor.VOCAL, DspProcessor.COMPANDER, DspProcessor.BASS, DspProcessor.IMPACT),
 ) {
     /**
@@ -56,12 +59,16 @@ data class DspParams(
             detailPercent = detailPercent.coerceIn(0f, 100f),
             airPercent = airPercent.coerceIn(0f, 100f),
             volumeDb = volumeDb.coerceIn(-40f, 10f),
+            eq = eq.sanitized(),
             order = fixedOrder,
         )
     }
 
     /** Whether the chain changes the audio at all (master on and something to do). */
-    val processes: Boolean get() = enabled && (companderOn || bassOn || impactOn || vocalOn || volumeDb != 0f || softClip)
+    val processes: Boolean get() = enabled && (companderOn || bassOn || impactOn || vocalOn || volumeDb != 0f || softClip || eqActive)
+
+    /** The headphone EQ changes the audio (on, with filters or a preamp). */
+    val eqActive: Boolean get() = eqOn && (eq.bands.isNotEmpty() || eq.preampDb != 0f)
 
     /** The layout NativeDsp.setParams expects. */
     fun toNativeValues() = floatArrayOf(
@@ -70,6 +77,9 @@ data class DspParams(
         if (impactOn) 1f else 0f, impactPercent, impactReleaseMs,
         volumeDb, if (softClip) 1f else 0f,
         if (vocalOn) 1f else 0f, presencePercent, detailPercent, airPercent,
+        // 16..: headphone EQ: on, preamp, band count, then (type, Hz, dB, Q) per band
+        if (eqOn) 1f else 0f, eq.preampDb, eq.bands.size.toFloat(),
+        *eq.bands.flatMap { listOf(it.type.id.toFloat(), it.freqHz, it.gainDb, it.q) }.toFloatArray(),
     )
 
     fun toNativeOrder() = order.map { it.id }.toIntArray()
