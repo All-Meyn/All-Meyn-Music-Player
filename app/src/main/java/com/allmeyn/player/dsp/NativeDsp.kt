@@ -17,6 +17,16 @@ object NativeDsp {
     @JvmStatic external fun setParams(handle: Long, values: FloatArray, order: IntArray)
 
     /** The current song's source for Air (see [AirSource]). */
+    /**
+     * The convolution EQ's filter, built for the chain's rate and handed over (all null = none):
+     * an impulse response (left, optional right, at irRate) or GraphicEQ points, plus a gain.
+     * Takes a few ms: call between buffers, not inside one.
+     */
+    @JvmStatic external fun setConvolution(
+        handle: Long, irLeft: FloatArray?, irRight: FloatArray?, irRate: Float,
+        graphicHz: FloatArray?, graphicDb: FloatArray?, gainDb: Float,
+    )
+
     @JvmStatic external fun setSource(handle: Long, lossy: Boolean, priorCutoffHz: Float)
 
     /** Interleaved float frames at byte [offset] of a direct [buffer], in place. False if not direct. */

@@ -95,7 +95,7 @@ object EqParser {
     fun parse(text: String, fallbackName: String = ""): EqImport {
         val notes = mutableListOf<String>()
         if (text.lineSequence().any { it.trimStart().startsWith("GraphicEQ:", ignoreCase = true) }) {
-            throw IllegalArgumentException("This is a GraphicEQ file: it needs the convolution EQ (coming next). Use the ParametricEQ.txt file for now.")
+            throw IllegalArgumentException("This is a GraphicEQ file: it goes in the convolution EQ (import it there).")
         }
         var preamp = 0f
         var name = ""

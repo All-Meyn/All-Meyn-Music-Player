@@ -65,6 +65,14 @@ object NativeEngine {
     @JvmStatic external fun playerSetReplayGain(mode: Int)
     /** The DSP chain: master switch, values and order as DspParams.toNativeValues / toNativeOrder. Applies at once. */
     @JvmStatic external fun playerSetDsp(enabled: Boolean, values: FloatArray, order: IntArray)
+    /**
+     * The convolution EQ's filter (all null = none): an impulse response (left, optional right, at
+     * irRate) or GraphicEQ points, plus a gain. Built for the playing stream (and each new one);
+     * takes a few ms, so call it off the UI thread.
+     */
+    @JvmStatic external fun playerSetConvolution(
+        irLeft: FloatArray?, irRight: FloatArray?, irRate: Float, graphicHz: FloatArray?, graphicDb: FloatArray?, gainDb: Float,
+    )
     /** The DSP meters (DspMeters layout) while the chain processes the song; null otherwise. */
     @JvmStatic external fun playerDspMeters(): FloatArray?
     /** Opens a song paused at the start: null, or why it can't be played. Blocks briefly (file + device). */

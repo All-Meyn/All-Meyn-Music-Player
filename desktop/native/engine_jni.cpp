@@ -159,7 +159,7 @@ JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetOut
  */
 JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetDsp(JNIEnv* env, jclass, jboolean enabled, jfloatArray values, jintArray order) {
     using allmeyn::dsp::kMaxEqBands;
-    constexpr int kValues = 16, kEqHead = 3, kMaxValues = kValues + kEqHead + 4 * kMaxEqBands;
+    constexpr int kValues = 16, kEqHead = 3, kMaxValues = kValues + kEqHead + 4 * kMaxEqBands + 1;
     if (!values || !order || env->GetArrayLength(values) < kValues || env->GetArrayLength(order) < allmeyn::dsp::kNumProcessors) return;
     const jsize length = std::min<jsize>(env->GetArrayLength(values), kMaxValues);
     jfloat v[kMaxValues] = {};
@@ -184,9 +184,35 @@ JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetDsp
             const jfloat* b = v + kValues + kEqHead + 4 * i;
             p.eqBands[i] = allmeyn::dsp::EqBand{(int) b[0], b[1], b[2], b[3]};
         }
+        const int convAt = kValues + kEqHead + 4 * n;  // then the convolution EQ's on/off
+        p.convOn = length > convAt && v[convAt] != 0;
     }
     for (int i = 0; i < allmeyn::dsp::kNumProcessors; i++) p.order[i] = o[i];
     player().setDsp(s);
+}
+
+/**
+ * The convolution EQ's filter (null arrays = none): an impulse response ([irLeft], optional
+ * [irRight], at [irRate]) or GraphicEQ points, plus [gainDb]. Built here for the playing stream
+ * (a few ms; called off the UI thread) and kept for later ones.
+ */
+JNIEXPORT void JNICALL Java_com_allmeyn_desktop_engine_NativeEngine_playerSetConvolution(JNIEnv* env, jclass, jfloatArray irLeft, jfloatArray irRight,
+                                                                                       jfloat irRate, jfloatArray graphicHz, jfloatArray graphicDb, jfloat gainDb) {
+    auto floats = [&](jfloatArray a) {
+        std::vector<float> v;
+        if (a) { v.resize((size_t) env->GetArrayLength(a)); if (!v.empty()) env->GetFloatArrayRegion(a, 0, (jsize) v.size(), v.data()); }
+        return v;
+    };
+    auto s = std::make_shared<allmeyn::dsp::ConvSource>();
+    s->ir[0] = floats(irLeft);
+    s->ir[1] = floats(irRight);
+    s->irChannels = s->ir[0].empty() ? 0 : (s->ir[1].empty() ? 1 : 2);
+    s->irRate = irRate;
+    s->graphicHz = floats(graphicHz);
+    s->graphicDb = floats(graphicDb);
+    s->gainDb = gainDb;
+    const bool empty = s->irChannels == 0 && s->graphicHz.size() < 2;
+    player().setConvolution(empty ? nullptr : std::move(s));
 }
 
 /** The DSP meters (Android NativeDsp layout, 12 floats) while the chain processes; else null. */

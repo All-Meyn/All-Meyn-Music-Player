@@ -36,6 +36,7 @@ add_library(allmeyn_core STATIC
     platform/file_open.cpp
     "${SHARED_CPP}/decoder/dsd.c"
     "${SHARED_CPP}/dsp/dsp_chain.cpp"
+    "${SHARED_CPP}/dsp/convolver.cpp"
 )
 target_include_directories(allmeyn_core PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"

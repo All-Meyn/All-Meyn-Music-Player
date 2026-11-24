@@ -26,7 +26,8 @@ struct DspSettings {
     bool processes() const {
         return enabled && (params.companderOn || params.bassOn || params.impactOn || params.vocalOn ||
                            params.volumeDb != 0.0f || params.softClip ||
-                           (params.eqOn && (params.eqBandCount > 0 || params.eqPreampDb != 0.0f)));
+                           (params.eqOn && (params.eqBandCount > 0 || params.eqPreampDb != 0.0f)) ||
+                           params.convOn);  // (the app sends convOn only with a filter set)
     }
 };
 
@@ -54,6 +55,12 @@ public:
     /** A new stream (the output isn't pulling yet): [pcm] false for DoP / native DSD. */
     void configure(int sampleRate, int channels, bool pcm, AirHint first);
     void release();
+    /**
+     * The convolution EQ's filter (null = none): kept for later streams, and built for the current
+     * one right away (on the calling thread, a few ms; never on the output thread).
+     */
+    void setConvolution(std::shared_ptr<const dsp::ConvSource> source);
+
     /** Decoder thread: the song starting at stream frame [at] (gapless join). */
     void sourceAt(int64_t at, AirHint hint);
     /** After a seek: fresh filters, and [hint] from the new position on. */
@@ -69,9 +76,11 @@ private:
     struct PendingSource { int64_t at; AirHint hint; };
     static constexpr int kMaxPendingSources = 8;
 
-    std::mutex chainLock_;  // held by process(); configure/release only when the output isn't pulling
+    std::mutex chainLock_;  // held by process(); configure/release only when the output isn't pulling (after convLock_)
     std::unique_ptr<dsp::Chain> chain_;
     std::atomic<bool> hasChain_{false};
+    std::mutex convLock_;  // the filter, and building/handing over kernels (never the output thread)
+    std::shared_ptr<const dsp::ConvSource> conv_;
 
     std::mutex pendingLock_;
     DspSettings pending_;

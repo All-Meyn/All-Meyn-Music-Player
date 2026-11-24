@@ -7,6 +7,7 @@
 #include "dsp_chain.h"
 
 #include <algorithm>
+#include <vector>
 
 using allmeyn::dsp::Chain;
 using allmeyn::dsp::kMeterCount;
@@ -41,7 +42,7 @@ JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_reset(JNIEnv*, jcla
  * order: kNumProcessors processor ids.
  */
 JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_setParams(JNIEnv* env, jclass, jlong h, jfloatArray values, jintArray order) {
-    constexpr int kValues = 16, kEqHead = 3, kMaxValues = kValues + kEqHead + 4 * kMaxEqBands;
+    constexpr int kValues = 16, kEqHead = 3, kMaxValues = kValues + kEqHead + 4 * kMaxEqBands + 1;
     const jsize length = h == 0 ? 0 : env->GetArrayLength(values);
     if (h == 0 || length < kValues || env->GetArrayLength(order) < kNumProcessors) return;
     jfloat v[kMaxValues] = {};
@@ -75,12 +76,45 @@ JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_setParams(JNIEnv* e
             const jfloat* b = v + kValues + kEqHead + 4 * i;
             p.eqBands[i] = EqBand{(int) b[0], b[1], b[2], b[3]};
         }
+        // Then the convolution EQ's on/off.
+        const int convAt = kValues + kEqHead + 4 * n;
+        p.convOn = std::min<jsize>(length, kMaxValues) > convAt && v[convAt] != 0;
     }
     for (int i = 0; i < kNumProcessors; i++) p.order[i] = o[i];
     chainOf(h)->setParams(p);
 }
 
 /** The current song's source: lossy (with a bitrate-based cutoff guess in Hz, 0 = none) or not. */
+static std::vector<float> floats(JNIEnv* env, jfloatArray a) {
+    std::vector<float> v;
+    if (a) {
+        v.resize((size_t) env->GetArrayLength(a));
+        if (!v.empty()) env->GetFloatArrayRegion(a, 0, (jsize) v.size(), v.data());
+    }
+    return v;
+}
+
+/**
+ * The convolution EQ's filter, built for this chain's sample rate and handed over (null arrays =
+ * none): an impulse response ([irLeft], optional [irRight], at [irRate]) or GraphicEQ points
+ * ([graphicHz], [graphicDb]), plus [gainDb]. Builds right here (a few ms): call outside the audio
+ * callback; the swap itself happens in the next process().
+ */
+JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_setConvolution(JNIEnv* env, jclass, jlong h, jfloatArray irLeft, jfloatArray irRight,
+                                                                           jfloat irRate, jfloatArray graphicHz, jfloatArray graphicDb, jfloat gainDb) {
+    if (h == 0) return;
+    Chain* c = chainOf(h);
+    allmeyn::dsp::ConvSource s;
+    s.ir[0] = floats(env, irLeft);
+    s.ir[1] = floats(env, irRight);
+    s.irChannels = s.ir[0].empty() ? 0 : (s.ir[1].empty() ? 1 : 2);
+    s.irRate = irRate;
+    s.graphicHz = floats(env, graphicHz);
+    s.graphicDb = floats(env, graphicDb);
+    s.gainDb = gainDb;
+    c->offerConvolution(allmeyn::dsp::buildConvKernel(s, c->sampleRate()));
+}
+
 JNIEXPORT void JNICALL Java_com_allmeyn_player_dsp_NativeDsp_setSource(JNIEnv*, jclass, jlong h, jboolean lossy, jfloat priorCutoffHz) {
     if (h != 0) chainOf(h)->setSource(lossy == JNI_TRUE, priorCutoffHz);
 }
