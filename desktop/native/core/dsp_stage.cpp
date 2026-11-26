@@ -22,6 +22,8 @@ void DspStage::setSettings(const DspSettings& s) {
 }
 
 void DspStage::configure(int sampleRate, int channels, bool pcm, AirHint first) {
+    // Lock order everywhere: convLock_, then chainLock_.
+    std::lock_guard<std::mutex> cv(convLock_);
     std::lock_guard<std::mutex> c(chainLock_);
     chain_.reset();
     if (pcm && sampleRate > 0 && channels >= 1 && channels <= dsp::kMaxChannels) {
@@ -29,6 +31,10 @@ void DspStage::configure(int sampleRate, int channels, bool pcm, AirHint first) 
     }
     hasChain_ = chain_ != nullptr;
     applied_ = ~0ull;  // the new chain gets the current settings on its first buffer
+    if (chain_) {
+        // The convolution filter, built for this stream's rate (the output isn't pulling yet).
+        if (conv_) chain_->offerConvolution(dsp::buildConvKernel(*conv_, sampleRate));
+    }
     {
         std::lock_guard<std::mutex> g(pendingLock_);
         sources_[0] = {0, first};
@@ -37,6 +43,21 @@ void DspStage::configure(int sampleRate, int channels, bool pcm, AirHint first) 
     }
     std::lock_guard<std::mutex> m(metersLock_);
     metersValid_ = false;
+}
+
+void DspStage::setConvolution(std::shared_ptr<const dsp::ConvSource> source) {
+    std::lock_guard<std::mutex> cv(convLock_);
+    conv_ = std::move(source);
+    double rate = 0;
+    {
+        std::lock_guard<std::mutex> c(chainLock_);
+        if (chain_) rate = chain_->sampleRate();
+    }
+    if (rate <= 0) return;  // no stream: configure() builds it
+    dsp::ConvKernel* k = conv_ ? dsp::buildConvKernel(*conv_, rate) : nullptr;  // outside the chain lock
+    std::lock_guard<std::mutex> c(chainLock_);
+    if (chain_ && chain_->sampleRate() == rate) chain_->offerConvolution(k);
+    else dsp::freeConvKernel(k);  // the stream changed meanwhile: configure() built its own
 }
 
 void DspStage::release() {

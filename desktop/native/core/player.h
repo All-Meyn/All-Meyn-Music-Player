@@ -46,6 +46,8 @@ public:
     void setReplayGain(ReplayGainMode m) { rgMode_ = (int) m; }
     /** The DSP chain's settings (any time; applies at once). With processing on, DSD opens as PCM. */
     void setDsp(const DspSettings& s) { dsp_.setSettings(s); }
+    /** The convolution EQ's filter (null = none); built for the stream right away. */
+    void setConvolution(std::shared_ptr<const dsp::ConvSource> s) { dsp_.setConvolution(std::move(s)); }
     /** The chain's meters while it processes the stream. */
     bool dspMeters(dsp::Meters& out) const { return dsp_.meters(out); }
     void play();

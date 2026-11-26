@@ -2,6 +2,8 @@
 #include "dsp_chain.h"
 
 #include <cmath>
+#include <thread>
+#include <atomic>
 #include <cstdio>
 #include <vector>
 
@@ -562,6 +564,146 @@ int main() {
             }
         }
         check(worstStep < toneStep * 1.6, "EQ: switching on fades in (largest step vs the tone's own)", worstStep / toneStep);
+    }
+
+    // ---- Convolution EQ ----
+    // FFT: matches a plain DFT, and forward + inverse gives the input back.
+    {
+        const int n = 64;
+        Fft f(n);
+        std::vector<cfloat> a(n), b;
+        for (int i = 0; i < n; i++) a[i] = cfloat((float) std::sin(i * 0.37), (float) std::cos(i * 1.3) * 0.5f);
+        b = a;
+        f.transform(b.data(), false);
+        double worst = 0;
+        for (int k = 0; k < n; k++) {
+            std::complex<double> sum = 0;
+            for (int i = 0; i < n; i++) sum += std::complex<double>(a[i]) * std::polar(1.0, -2 * PI * i * k / n);
+            worst = std::fmax(worst, std::abs(sum - std::complex<double>(b[k])));
+        }
+        f.transform(b.data(), true);
+        double back = 0;
+        for (int i = 0; i < n; i++) back = std::fmax(back, std::abs(b[i] / (float) n - a[i]));
+        check(worst < 1e-4 && back < 1e-5, "FFT: matches a direct DFT; inverse restores the input", worst);
+    }
+    auto noiseIr = [](int len, unsigned seed, double decay) {
+        std::vector<float> h(len);
+        unsigned r = seed;
+        for (int i = 0; i < len; i++) { r = r * 1664525u + 1013904223u; h[i] = (float) ((((r >> 8) & 0xFFFF) / 32768.0 - 1.0) * std::exp(-i / decay)); }
+        return h;
+    };
+    // Partitioned convolution = direct convolution, B samples later, each channel its own filter.
+    {
+        ConvSource src;
+        src.irChannels = 2; src.irRate = SR;
+        src.ir[0] = noiseIr(3000, 1, 600);
+        src.ir[1] = noiseIr(1700, 2, 300);
+        ConvKernel* k = buildConvKernel(src, SR);
+        const int B = convKernelLatency(k);
+        auto in = sine(997, -6, 0.5);
+        for (size_t i = 0; i < in.size(); i += 2) in[i + 1] = in[i] * 0.5f + 0.1f * (float) std::sin(i * 0.01);  // different right
+        std::vector<float> out(in);
+        for (size_t i = 0; i < out.size(); i += 2) convProcessFrame(k, &out[i], 2);
+        double worst = 0, peak = 0;
+        const int frames = (int) in.size() / 2;
+        for (int n = B; n < frames; n += 37) {
+            for (int c = 0; c < 2; c++) {
+                double ref = 0;
+                const auto& h = src.ir[c];
+                for (int t = 0; t < (int) h.size() && n - B - t >= 0; t++) ref += h[t] * in[2 * (n - B - t) + c];
+                worst = std::fmax(worst, std::fabs(ref - out[2 * n + c]));
+                peak = std::fmax(peak, std::fabs(ref));
+            }
+        }
+        check(B == 256 && worst < 1e-4 * peak, "convolution: partitioned = direct, per channel, 256 samples late at 48 kHz (max error / peak)", worst / peak);
+        // Mono audio with a stereo filter: the left one.
+        convReset(k);
+        std::vector<float> mono(4096, 0.0f);
+        mono[0] = 1.0f;
+        for (int i = 0; i < 4096; i++) convProcessFrame(k, &mono[i], 1);
+        double e = 0;
+        for (int t = 0; t < 3000 && B + t < 4096; t++) e = std::fmax(e, std::fabs(mono[B + t] - src.ir[0][t]));
+        check(e < 1e-5, "convolution: mono audio gets the left filter (impulse in = filter out)", e);
+        freeConvKernel(k);
+    }
+    // Resampling a response keeps its frequency response: a peak filter's impulse response at
+    // 44.1 kHz, used at 96 kHz.
+    {
+        EqFilter pk;
+        pk.design({kEqPeak, 3000, 6.0f, 1.0f}, 44100.0);
+        ConvSource src;
+        src.irChannels = 1; src.irRate = 44100;
+        src.ir[0].resize(4096);
+        EqFilter run1 = pk;
+        for (int i = 0; i < 4096; i++) src.ir[0][i] = (float) run1.process(0, i == 0 ? 1.0 : 0.0);
+        const auto taps = designConvFilter(src, 96000.0);
+        auto magDb = [&](const std::vector<float>& h, double hz, double fs) {
+            std::complex<double> sum = 0;
+            for (size_t i = 0; i < h.size(); i++) sum += (double) h[i] * std::polar(1.0, -2 * PI * hz * i / fs);
+            return 20 * std::log10(std::abs(sum));
+        };
+        double worst = 0;
+        for (double hz : {100.0, 1000.0, 3000.0, 8000.0, 15000.0}) worst = std::fmax(worst, std::fabs(magDb(taps[0], hz, 96000.0) - pk.magnitudeDb(hz, 44100.0)));
+        check(worst < 0.05, "convolution: a 44.1 kHz response resampled to 96 kHz keeps its curve (max |dB| off)", worst);
+        // GraphicEQ: a minimum-phase filter following the points (log-frequency interpolation).
+        ConvSource g;
+        for (double f = 20; f <= 20000; f *= 1.06) { g.graphicHz.push_back((float) f); g.graphicDb.push_back((float) (pk.magnitudeDb(f, 48000.0) - 4.0)); }
+        const auto h = designConvFilter(g, 48000.0)[0];
+        double gw = 0;
+        for (double hz : {40.0, 200.0, 1000.0, 3000.0, 6000.0, 12000.0}) gw = std::fmax(gw, std::fabs(magDb(h, hz, 48000.0) - (pk.magnitudeDb(hz, 48000.0) - 4.0)));
+        double early = 0, total = 0;
+        for (size_t i = 0; i < h.size(); i++) { total += h[i] * h[i]; if (i < h.size() / 20) early += h[i] * h[i]; }
+        check(gw < 0.1 && h.size() == 4800, "convolution: GraphicEQ points -> 100 ms filter with that curve (max |dB| off)", gw);
+        check(early / total > 0.99, "convolution: the GraphicEQ filter is minimum phase (energy in the first 5 %)", early / total);
+        ConvSource louder = g;
+        louder.gainDb = -6.0f;
+        const auto hq = designConvFilter(louder, 48000.0)[0];
+        check(std::fabs(magDb(hq, 1000, 48000.0) - magDb(h, 1000, 48000.0) + 6.0) < 0.01, "convolution: gain applies", magDb(hq, 1000, 48000.0) - magDb(h, 1000, 48000.0));
+    }
+    // In the chain: on = the filtered audio (latency reported); a kernel for another rate is refused;
+    // off = untouched; kernels swapped from another thread while it plays (TSan).
+    {
+        ConvSource src;
+        src.irChannels = 1; src.irRate = SR;
+        src.ir[0] = {0.5f};  // -6 dB, no colour
+        Chain c(SR, 2);
+        Params p; p.convOn = true;
+        c.setParams(p);
+        c.offerConvolution(buildConvKernel(src, SR));
+        auto in = sine(1000, -12, 0.5);
+        std::vector<float> out(in);
+        for (size_t i = 0; i < out.size(); i += 2 * 480) c.process(out.data() + i, (int) std::min<size_t>(480, (out.size() - i) / 2));
+        const int B = c.convolutionLatency();
+        double worst = 0;
+        for (size_t n = 2 * B + 4800; n < out.size(); n++) worst = std::fmax(worst, std::fabs(out[n] - 0.5f * in[n - 2 * B]));
+        check(B == 256 && worst < 1e-5, "convolution in the chain: filtered and 256 samples late", worst);
+        Chain d(96000.0, 2);
+        d.setParams(p);
+        d.offerConvolution(buildConvKernel(src, SR));  // built for 48 kHz
+        auto in2 = sine(1000, -12, 0.1);
+        std::vector<float> out2(in2);
+        d.process(out2.data(), (int) out2.size() / 2);
+        check(d.convolutionLatency() == 0 && out2 == in2, "convolution: a kernel for another sample rate is refused (audio untouched)", d.convolutionLatency());
+        Chain e(SR, 2);
+        e.setParams(Params {});
+        e.offerConvolution(buildConvKernel(src, SR));
+        std::vector<float> out3(in2);
+        e.process(out3.data(), (int) out3.size() / 2);
+        check(out3 == in2, "convolution off: output identical to input", 0);
+        std::atomic<bool> stop {false};
+        std::thread offer([&] {
+            for (int i = 0; !stop; i++) { src.ir[0] = {i % 2 ? 0.5f : 0.25f}; c.offerConvolution(buildConvKernel(src, SR)); std::this_thread::sleep_for(std::chrono::microseconds(300)); }
+        });
+        std::vector<float> buf(2 * 480);
+        bool finite = true;
+        for (int blk = 0; blk < 2000; blk++) {
+            for (int i = 0; i < 480; i++) buf[2 * i] = buf[2 * i + 1] = (float) (0.3 * std::sin(i * 0.1));
+            c.process(buf.data(), 480);
+            for (float v : buf) finite &= std::isfinite(v) && std::fabs(v) < 1.0f;
+        }
+        stop = true;
+        offer.join();
+        check(finite, "convolution: kernels swapped from another thread while playing (no crash, finite)", 0);
     }
 
     std::printf(failures ? "%d DSP test(s) FAILED\n" : "DSP tests passed\n", failures);

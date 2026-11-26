@@ -1,9 +1,16 @@
 package com.allmeyn.desktop.engine
 
+import com.allmeyn.desktop.library.DesktopLibrary
+import com.allmeyn.player.dsp.ConvKind
+import com.allmeyn.player.dsp.ConvolutionFiles
+import com.allmeyn.player.dsp.ConvolutionFilter
 import com.allmeyn.player.dsp.DspMeters
 import com.allmeyn.player.dsp.DspParams
 import com.allmeyn.player.dsp.DspProcessor
 import com.allmeyn.player.dsp.EqLibrary
+import com.allmeyn.player.dsp.GraphicEqParser
+import java.io.File
+import java.util.concurrent.Executors
 import java.util.prefs.Preferences
 
 /**
@@ -12,6 +19,12 @@ import java.util.prefs.Preferences
  */
 object DspStore {
     private val prefs: Preferences = Preferences.userRoot().node("com/allmeyn/desktop/dsp")
+
+    init { ConvolutionFiles.init(File(DesktopLibrary.defaultDataDir(), "convolution")) }
+
+    // Convolution filters are read and built off the UI thread, one at a time (the last one wins).
+    private val convWorker = Executors.newSingleThreadExecutor { r -> Thread(r, "All-Meyn convolution").apply { isDaemon = true } }
+    private var convKey: Any? = null  // UI thread
 
     fun load(): DspParams {
         val d = DspParams()
@@ -35,6 +48,15 @@ object DspStore {
             softClip = prefs.getBoolean("softClip", d.softClip),
             eqOn = prefs.getBoolean("eqOn", d.eqOn),
             eq = prefs.get("eqProfile", null)?.let { EqLibrary.decode(it).firstOrNull() } ?: d.eq,
+            convOn = prefs.getBoolean("convOn", d.convOn),
+            convGainDb = prefs.getFloat("convGainDb", d.convGainDb),
+            conv = ConvolutionFilter(
+                kind = ConvKind.entries.firstOrNull { it.name == prefs.get("convKind", null) } ?: ConvKind.NONE,
+                name = prefs.get("convName", ""),
+                irFile = prefs.get("convFile", ""),
+                graphic = prefs.get("convGraphic", null)?.let { runCatching { GraphicEqParser.parse(it) }.getOrNull() }.orEmpty(),
+                info = prefs.get("convInfo", ""),
+            ),
             order = prefs.get("order", null)?.let(::parseOrder) ?: d.order,
         ).sanitized()
     }
@@ -60,11 +82,40 @@ object DspStore {
         prefs.put("order", p.order.joinToString(",") { it.name })
         prefs.putBoolean("eqOn", p.eqOn)
         prefs.put("eqProfile", EqLibrary.encode(listOf(p.eq)))  // ≤ 20 filters: well under Preferences' 8 KB
+        prefs.putBoolean("convOn", p.convOn)
+        prefs.putFloat("convGainDb", p.convGainDb)
+        prefs.put("convKind", p.conv.kind.name)
+        prefs.put("convName", p.conv.name)
+        prefs.put("convFile", p.conv.irFile)
+        // A GraphicEQ line: ≤ 400 points (GraphicEqParser.MAX_POINTS), so under Preferences' 8 KB per value.
+        prefs.put("convGraphic", if (p.conv.graphic.isEmpty()) "" else GraphicEqParser.toText(p.conv.graphic))
+        prefs.put("convInfo", p.conv.info)
     }
 
     /** Tells the engine (applies at once). */
     fun apply(p: DspParams) {
-        if (NativeEngine.isReady) NativeEngine.playerSetDsp(p.enabled, p.toNativeValues(), p.toNativeOrder())
+        if (!NativeEngine.isReady) return
+        NativeEngine.playerSetDsp(p.enabled, p.toNativeValues(), p.toNativeOrder())
+        val key = if (p.convActive) p.conv to p.convGainDb else null
+        if (key != convKey) {
+            convKey = key
+            convWorker.execute { sendConvolution(p) }
+        }
+    }
+
+    private fun sendConvolution(p: DspParams) {
+        val f = p.conv
+        when {
+            !p.convActive -> NativeEngine.playerSetConvolution(null, null, 0f, null, null, 0f)
+            f.kind == ConvKind.GRAPHIC -> NativeEngine.playerSetConvolution(
+                null, null, 0f, FloatArray(f.graphic.size) { f.graphic[it].hz }, FloatArray(f.graphic.size) { f.graphic[it].db }, p.convGainDb,
+            )
+            else -> {
+                val ir = ConvolutionFiles.load(f.irFile)
+                if (ir == null) NativeEngine.playerSetConvolution(null, null, 0f, null, null, 0f)
+                else NativeEngine.playerSetConvolution(ir.channels[0], ir.channels.getOrNull(1), ir.rate.toFloat(), null, null, p.convGainDb)
+            }
+        }
     }
 
     /** The chain's meters while it processes the song; null otherwise. */

@@ -32,6 +32,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.allmeyn.player.dsp.ConvolutionFilter
 import com.allmeyn.player.dsp.EqBand
 import com.allmeyn.player.dsp.EqFilterType
 import com.allmeyn.player.dsp.EqProfile
@@ -168,8 +169,14 @@ private fun NumberField(label: String, value: Float, decimals: Int, modifier: Mo
 /** The EQ's response (preamp included), 20 Hz - 20 kHz on a log scale, 0 dB marked. */
 @Composable
 fun EqCurve(profile: EqProfile, modifier: Modifier) {
-    val freqs = remember { EqProfile.plotFrequencies(200) }
-    val db = remember(profile) { profile.responseDb(freqs) }
+    val db = remember(profile) { profile.responseDb(EqProfile.plotFrequencies()) }
+    CurveOf(db, modifier)
+}
+
+/** A response in dB at EqProfile.plotFrequencies(), drawn on a log frequency scale. */
+@Composable
+fun CurveOf(db: FloatArray, modifier: Modifier) {
+    val freqs = remember(db.size) { EqProfile.plotFrequencies(db.size) }
     val range = maxOf(6f, ceil((db.maxOfOrNull { abs(it) } ?: 0f) + 1f))
     val line = MaterialTheme.colorScheme.primary
     val grid = MaterialTheme.colorScheme.outlineVariant
@@ -190,6 +197,59 @@ fun EqCurve(profile: EqProfile, modifier: Modifier) {
             Text("20 Hz", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = zero)
             Text("±${range.roundToInt()} dB", style = MaterialTheme.typography.labelSmall, color = zero)
             Text("20 kHz", Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = zero, textAlign = androidx.compose.ui.text.style.TextAlign.End)
+        }
+    }
+}
+
+/**
+ * The convolution EQ: on/off, the filter (an impulse response WAV, e.g. AutoEq's "minimum phase"
+ * files or your own, or a GraphicEQ), its curve, and a gain. [curveDb] is the filter's response at
+ * EqProfile.plotFrequencies() (the caller works it out off the UI thread; null while it does).
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun ConvolutionEqEditor(
+    on: Boolean,
+    filter: ConvolutionFilter,
+    gainDb: Float,
+    curveDb: FloatArray?,
+    notes: List<String>,
+    onOn: (Boolean) -> Unit,
+    onGain: (Float) -> Unit,
+    onImportFile: () -> Unit,
+    onPaste: () -> Unit,
+    onClear: () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("On", Modifier.weight(1f), fontWeight = FontWeight.Medium)
+            Switch(checked = on, onCheckedChange = onOn, enabled = filter.isSet)
+        }
+        Text(
+            "Applies an impulse response (a WAV, such as AutoEq's minimum phase files, or your own) or a " +
+                "GraphicEQ, after the parametric EQ. Adds about 5 ms of delay.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (filter.isSet) {
+            Text(filter.name.ifBlank { "Unnamed" }, fontWeight = FontWeight.Medium)
+            Text(filter.info, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            Text("No filter yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = onImportFile) { Text("Import file…") }
+            TextButton(onClick = onPaste) { Text("Paste GraphicEQ") }
+            TextButton(onClick = onClear, enabled = filter.isSet) { Text("Clear") }
+        }
+        notes.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+        if (filter.isSet) {
+            if (curveDb != null) CurveOf(curveDb, Modifier.fillMaxWidth().height(150.dp))
+            else Text("Working out the curve…", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row {
+                Text("Gain", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                Text(String.format(Locale.ROOT, "%+.1f dB", gainDb), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+            }
+            Slider(value = gainDb, valueRange = -30f..10f, onValueChange = { v -> onGain((v * 2).roundToInt() / 2f) })
         }
     }
 }

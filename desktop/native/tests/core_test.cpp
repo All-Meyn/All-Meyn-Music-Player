@@ -631,6 +631,35 @@ static void testDsp() {
     player.setDsp(half);
     check(player.open(writeDsf(0.2), err) && fake->format.bitExact, "dsp: off again = DSD bit-exact again");
 
+    // Convolution EQ through the player: a 0.5 impulse = half level, 256 samples late at 44.1 kHz;
+    // the filter set before the song (built at open) and changed while it plays (built at once).
+    {
+        auto half = std::make_shared<dsp::ConvSource>();
+        half->irChannels = 1; half->irRate = 44100; half->ir[0] = {0.5f};
+        player.setConvolution(half);
+        DspSettings conv;
+        conv.enabled = true;
+        conv.params.convOn = true;
+        player.setDsp(conv);
+        check(player.open(asset("clip16.flac"), err), "convolution: opens with the filter " + err);
+        player.play();
+        auto got = pullFrames(6000);
+        double worst = 0;
+        for (size_t k = 2 * 256; k < got.size(); k++) worst = std::max(worst, (double) std::fabs(got[k] - all[k - 2 * 256] * 0.5f));
+        check(got.size() == 12000 && worst < 1e-5, "convolution: the player's output is the filtered song, 256 samples late", worst);
+        auto quarter = std::make_shared<dsp::ConvSource>(*half);
+        quarter->gainDb = -6.0206f;
+        player.setConvolution(quarter);  // while playing
+        pullFrames(2000);  // the swap lands at the next buffer; the new kernel starts from silence
+        const int64_t at = player.positionFrames();
+        auto later = pullFrames(2000);
+        worst = 0;
+        for (size_t k = 0; k < later.size(); k++) worst = std::max(worst, (double) std::fabs(later[k] - all[(size_t) (at - 256) * 2 + k] * 0.25f));
+        check(worst < 1e-5, "convolution: a new filter while playing takes over", worst);
+        player.setConvolution(nullptr);
+        player.close();
+    }
+
     // The full chain on music runs and stays finite while settings change under it (TSan: no races).
     DspSettings full;
     full.enabled = true;

@@ -50,7 +50,7 @@ class DspParamsTest {
             vocalOn = true, presencePercent = 60f, detailPercent = 30f, airPercent = 10f,
             order = listOf(DspProcessor.VOCAL, DspProcessor.BASS, DspProcessor.IMPACT, DspProcessor.COMPANDER))
         // The 16 processor values, then the headphone EQ (off, 0 dB preamp, no filters).
-        assertArrayEquals(floatArrayOf(1f, -20f, -25f, 2f, 0f, 40f, -18f, 1f, 75f, 300f, -2f, 1f, 1f, 60f, 30f, 10f, 0f, 0f, 0f), p.toNativeValues(), 0f)
+        assertArrayEquals(floatArrayOf(1f, -20f, -25f, 2f, 0f, 40f, -18f, 1f, 75f, 300f, -2f, 1f, 1f, 60f, 30f, 10f, 0f, 0f, 0f, 0f), p.toNativeValues(), 0f)
         assertArrayEquals(intArrayOf(3, 1, 2, 0), p.toNativeOrder())
     }
 

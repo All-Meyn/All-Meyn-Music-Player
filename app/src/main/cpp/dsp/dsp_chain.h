@@ -27,6 +27,10 @@
 // Real-time safe: process() never allocates.
 #pragma once
 
+#include <atomic>
+
+#include "convolver.h"
+
 namespace allmeyn::dsp {
 
 constexpr int kBands = 4;
@@ -67,6 +71,8 @@ struct Params {
     float presencePercent = 50.0f;   // 0..100: consonant / attack lift in the vocal band
     float detailPercent = 50.0f;     // 0..100: upward expansion of the quiet vocal band
     float airPercent = 25.0f;        // 0..100: harmonics and lift above ~9 kHz
+    // Convolution EQ (after the parametric EQ); the kernel itself comes via Chain::offerConvolution
+    bool  convOn = false;
     // Headphone EQ (after the processors, before the output stage)
     bool  eqOn = false;
     float eqPreampDb = 0.0f;         // -30..+10, usually negative to leave headroom for boosts
@@ -209,7 +215,21 @@ struct VocalState {
 class Chain {
 public:
     Chain(double sampleRate, int channels);
+    ~Chain();
+    Chain(const Chain&) = delete;
+    Chain& operator=(const Chain&) = delete;
     void setParams(const Params& p);
+    /**
+     * Convolution EQ: hands the chain a kernel built for its sample rate (buildConvKernel, off the
+     * audio thread), or null to remove it. Takes ownership; the audio thread swaps it in at the next
+     * block without allocating or freeing. Frees what the chain gave back since the last call.
+     * Call from one thread at a time. A kernel for another rate is refused (freed later).
+     */
+    void offerConvolution(ConvKernel* kernel);
+    /** Frees a kernel the audio thread has finished with (also done by offerConvolution). */
+    void collectConvolution();
+    /** Samples of latency the convolution adds right now (0 without one). */
+    int convolutionLatency() const { return convLatency.load(std::memory_order_relaxed); }
     /** Interleaved float frames, in place. */
     void process(float* data, int frames);
     void reset();
@@ -235,6 +255,8 @@ private:
     void runImpact(float x[kMaxChannels], int n);
     void runVocal(float x[kMaxChannels], int n);
     void runEq(float x[kMaxChannels], int n);
+    void runConv(float x[kMaxChannels], int n);
+    void takeOfferedConvolution();
 public:
     /** The song's source, from the file: see CutoffDetector::setSource. */
     void setSource(bool lossy, float priorCutoffHz) { cutoffDet.setSource(lossy, priorCutoffHz); }
@@ -276,6 +298,14 @@ private:
     int eqCount = 0;
     Smoothed eqMix, eqPreamp;
     bool eqFresh = true;
+
+    // Convolution EQ: the running kernel (audio thread only), the one offered, the one given back.
+    ConvKernel* conv = nullptr;
+    std::atomic<ConvKernel*> convOffered;
+    std::atomic<ConvKernel*> convRetired{nullptr};
+    std::atomic<int> convLatency{0};
+    Smoothed convMix;
+    bool convFresh = true;
 
     int order[kNumProcessors] = {kVocal, kCompander, kBass, kImpact};
     Meters m {};

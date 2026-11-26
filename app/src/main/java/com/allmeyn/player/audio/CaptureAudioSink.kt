@@ -13,6 +13,9 @@ import com.allmeyn.player.plugin.PcmFormat
 import com.allmeyn.player.plugin.PluginHost
 import com.allmeyn.player.dsp.AirSource
 import com.allmeyn.player.dsp.DspMeters
+import com.allmeyn.player.dsp.ConvKind
+import com.allmeyn.player.dsp.ConvolutionFiles
+import com.allmeyn.player.dsp.DspParams
 import com.allmeyn.player.dsp.DspSettings
 import com.allmeyn.player.dsp.NativeDsp
 import java.nio.ByteBuffer
@@ -66,6 +69,8 @@ class CaptureAudioSink(
     private var chainChannels = 0
     private var paramsVersion = -1
     private var sourceVersion = -1
+    /** The convolution filter (and gain) the chain was given; rebuilt when it or the chain changes. */
+    private var convKey: Any? = null
     private var convertBuffer: ByteBuffer? = null  // int -> float conversion (direct, little-endian)
     private var pendingOut: ByteBuffer? = null     // converted buffer still being fed to the sink
     private val meterValues = FloatArray(NativeDsp.METER_COUNT)
@@ -150,6 +155,13 @@ class CaptureAudioSink(
         if (paramsVersion != DspSettings.version) {
             paramsVersion = DspSettings.version
             NativeDsp.setParams(chain, params.toNativeValues(), params.toNativeOrder())
+            // Convolution EQ: build the filter for this chain when it changed (a few ms, between
+            // buffers; the chain swaps it in without waiting).
+            val key = if (params.convActive) params.conv to params.convGainDb else null
+            if (key != convKey) {
+                convKey = key
+                giveConvolution(chain, params)
+            }
         }
         if (sourceVersion != AirSource.version) {
             sourceVersion = AirSource.version
@@ -175,8 +187,25 @@ class CaptureAudioSink(
         chainRate = rate
         chainChannels = channels
         paramsVersion = -1
+        convKey = null
         sourceVersion = -1
         return chain != 0L
+    }
+
+    private fun giveConvolution(chain: Long, params: DspParams) {
+        val f = params.conv
+        when {
+            !params.convActive -> NativeDsp.setConvolution(chain, null, null, 0f, null, null, 0f)
+            f.kind == ConvKind.GRAPHIC -> NativeDsp.setConvolution(
+                chain, null, null, 0f,
+                FloatArray(f.graphic.size) { f.graphic[it].hz }, FloatArray(f.graphic.size) { f.graphic[it].db }, params.convGainDb,
+            )
+            else -> {
+                val ir = ConvolutionFiles.load(f.irFile)
+                if (ir == null) NativeDsp.setConvolution(chain, null, null, 0f, null, null, 0f)
+                else NativeDsp.setConvolution(chain, ir.channels[0], ir.channels.getOrNull(1), ir.rate.toFloat(), null, null, params.convGainDb)
+            }
+        }
     }
 
     private fun releaseChain() {

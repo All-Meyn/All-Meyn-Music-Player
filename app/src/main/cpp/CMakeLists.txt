@@ -27,9 +27,9 @@ target_link_libraries(usb1.0 PRIVATE log)
 add_library(allmeyn_usb SHARED
     usb_audio_jni.c usb_audio_engine.c usb_audio_core.c
     decoder/dsd.c decoder/ffdec.c decoder/decoder_jni.c
-    dsp/dsp_chain.cpp dsp/dsp_jni.cpp
+    dsp/dsp_chain.cpp dsp/convolver.cpp dsp/dsp_jni.cpp
 )
-set_source_files_properties(dsp/dsp_chain.cpp dsp/dsp_jni.cpp PROPERTIES COMPILE_OPTIONS "-std=c++17;-O2;-fno-exceptions;-fno-rtti")
+set_source_files_properties(dsp/dsp_chain.cpp dsp/convolver.cpp dsp/dsp_jni.cpp PROPERTIES COMPILE_OPTIONS "-std=c++17;-O2;-fno-exceptions;-fno-rtti")
 target_link_libraries(allmeyn_usb PRIVATE usb1.0 log m)
 
 # ---- FFmpeg, optional: built by scripts/build-ffmpeg.sh -----------------------------------------

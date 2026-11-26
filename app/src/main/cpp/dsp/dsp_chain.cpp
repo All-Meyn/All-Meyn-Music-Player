@@ -282,7 +282,14 @@ void BandSplitter::snapToZero() {
 
 // ---- Chain ------------------------------------------------------------------------------------
 
+namespace {
+// "Nothing offered" in Chain::convOffered (null means "remove the convolution").
+char gNoOffer;
+ConvKernel* noOffer() { return reinterpret_cast<ConvKernel*>(&gNoOffer); }
+}  // namespace
+
 Chain::Chain(double sampleRate, int channels) : sr(sampleRate), chans(std::min(std::max(channels, 1), kMaxChannels)) {
+    convOffered.store(noOffer());
     compSplit.setup(sr);
     impSplit.setup(sr);
     bassSplit.setup(kBassCrossoverHz, sr);
@@ -320,7 +327,7 @@ Chain::Chain(double sampleRate, int channels) : sr(sampleRate), chans(std::min(s
     voc.down2.setup(aaHz, 2.0 * sr, kButterQ2);
     for (Smoothed* s : {&compMix, &bassMix, &impMix, &ratioMinusOne, &transition, &hfTransition,
                         &bassRatio, &bassPivot, &impactAmount, &volumeDb,
-                        &vocalMix, &presence, &detail, &air, &eqMix, &eqPreamp})
+                        &vocalMix, &presence, &detail, &air, &eqMix, &eqPreamp, &convMix})
         s->reset(sr, kSmoothingSeconds);
     reset();
 }
@@ -340,7 +347,7 @@ void Chain::reset() {
     bassDet.levelDb = powerToDb(kDetectorFloor);
     voc.reset();
     for (auto& f : eqFilters) f.reset();
-    compFresh = bassFresh = impFresh = vocFresh = eqFresh = true;
+    compFresh = bassFresh = impFresh = vocFresh = eqFresh = convFresh = true;
     m = Meters {};
 }
 
@@ -416,9 +423,50 @@ void Chain::runEq(float x[kMaxChannels], int n) {
     }
 }
 
+Chain::~Chain() {
+    freeConvKernel(conv);
+    ConvKernel* o = convOffered.exchange(noOffer());
+    if (o != noOffer()) freeConvKernel(o);
+    freeConvKernel(convRetired.exchange(nullptr));
+}
+
+void Chain::collectConvolution() { freeConvKernel(convRetired.exchange(nullptr)); }
+
+void Chain::offerConvolution(ConvKernel* kernel) {
+    collectConvolution();
+    ConvKernel* before = convOffered.exchange(kernel);
+    if (before != noOffer()) freeConvKernel(before);  // never taken by the audio thread
+}
+
+void Chain::takeOfferedConvolution() {
+    if (convRetired.load(std::memory_order_acquire) != nullptr) return;  // last one not collected yet
+    ConvKernel* k = convOffered.exchange(noOffer(), std::memory_order_acq_rel);
+    if (k == noOffer()) return;
+    if (k != nullptr && convKernelRate(k) != sr) {  // built for another rate: give it back
+        convRetired.store(k, std::memory_order_release);
+        return;
+    }
+    ConvKernel* old = conv;
+    conv = k;
+    convFresh = true;
+    convLatency.store(convKernelLatency(k), std::memory_order_relaxed);
+    if (old) convRetired.store(old, std::memory_order_release);
+}
+
+void Chain::runConv(float x[kMaxChannels], int n) {
+    const float mix = convMix.next();
+    if (conv == nullptr || (mix <= 0.0f && convMix.idle())) { convFresh = true; return; }
+    if (convFresh) { convReset(conv); convFresh = false; }  // no stale audio from before
+    float dry[kMaxChannels];
+    for (int c = 0; c < n; c++) dry[c] = x[c];
+    convProcessFrame(conv, x, n);
+    for (int c = 0; c < n; c++) x[c] = dry[c] + mix * (x[c] - dry[c]);
+}
+
 void Chain::setParams(const Params& p) {
     const bool snapNow = first;  // the first call jumps straight to the values
     first = false;
+    convMix.set(p.convOn ? 1.0f : 0.0f, snapNow);
     // Headphone EQ: redesign only the bands that changed (their state is kept, so no click).
     eqMix.set(p.eqOn ? 1.0f : 0.0f, snapNow);
     eqPreamp.set(clampf(p.eqPreampDb, -30.0f, 10.0f), snapNow);
@@ -659,6 +707,7 @@ void Chain::runVocal(float x[kMaxChannels], int n) {
 }
 
 void Chain::process(float* data, int frames) {
+    takeOfferedConvolution();  // a new convolution kernel, if one was handed over
     float peak = 0;
     for (int i = 0; i < frames; i++) {
         float* f = data + (long) i * chans;
@@ -671,7 +720,8 @@ void Chain::process(float* data, int frames) {
                 case kVocal: runVocal(x, chans); break;
             }
         }
-        runEq(x, chans);  // headphone correction last, before volume and soft clip
+        runEq(x, chans);    // headphone correction last, before volume and soft clip
+        runConv(x, chans);  // (convolution EQ right after the parametric one)
         const float vol = dbToGain(volumeDb.next());
         for (int c = 0; c < chans; c++) {
             float y = x[c] * vol;

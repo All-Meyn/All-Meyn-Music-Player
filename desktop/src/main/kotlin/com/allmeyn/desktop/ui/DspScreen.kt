@@ -32,6 +32,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -41,7 +42,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.allmeyn.desktop.engine.DspStore
 import com.allmeyn.desktop.library.DesktopEqProfiles
-import com.allmeyn.player.dsp.EqParser
+import com.allmeyn.player.dsp.ConvKind
+import com.allmeyn.player.dsp.ConvolutionFiles
+import com.allmeyn.player.dsp.ConvolutionFilter
+import com.allmeyn.player.dsp.EqProfile
+import com.allmeyn.player.dsp.GraphicEqParser
+import com.allmeyn.player.dsp.WavReader
+import com.allmeyn.player.dsp.importEqFile
+import com.allmeyn.player.ui.ConvolutionEqEditor
 import com.allmeyn.player.ui.HeadphoneEqEditor
 import java.awt.FileDialog
 import java.awt.Frame
@@ -54,6 +62,7 @@ import com.allmeyn.player.dsp.DspParams
 import com.allmeyn.player.dsp.DspProcessor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.log10
 import kotlin.math.roundToInt
@@ -78,13 +87,52 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
     val eqStore = remember { DesktopEqProfiles() }
     var savedEqs by remember { mutableStateOf(eqStore.load()) }
     var eqNotes by remember { mutableStateOf<List<String>>(emptyList()) }
-    fun importEq(text: String, name: String) {
-        try {
-            val r = EqParser.parse(text, name)
-            onChange { it.copy(eq = r.profile, eqOn = true) }
-            eqNotes = listOf("Imported ${r.profile.bands.size} filters.") + r.notes
-        } catch (e: IllegalArgumentException) {
-            eqNotes = listOf(e.message ?: "Couldn't read that EQ.")
+    var convNotes by remember { mutableStateOf<List<String>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+    // Any EQ file, from either section (importEqFile sends it to the right one), read off the UI thread.
+    fun importFile(read: () -> ByteArray?, fileName: String, fromConvolution: Boolean) {
+        scope.launch {
+            val bytes = withContext(Dispatchers.IO) { runCatching(read).getOrNull() }
+            if (bytes == null) {
+                val msg = listOf("Couldn't open that file (or it's over 32 MB).")
+                if (fromConvolution) convNotes = msg else eqNotes = msg
+                return@launch
+            }
+            val r = withContext(Dispatchers.IO) { importEqFile(bytes, fileName, fromConvolution) }
+            r.change?.let(onChange)
+            r.eqNotes?.let { eqNotes = it }
+            r.convNotes?.let { convNotes = it }
+        }
+    }
+    fun pickFile(title: String, fromConvolution: Boolean) {
+        val dialog = FileDialog(null as Frame?, title, FileDialog.LOAD)
+        dialog.isVisible = true  // modal
+        val dir = dialog.directory
+        val name = dialog.file
+        if (dir != null && name != null) {
+            importFile({ File(dir, name).takeIf { it.length() <= WavReader.MAX_BYTES }?.readBytes() }, name, fromConvolution)
+        }
+    }
+    fun pasteText(fromConvolution: Boolean) {
+        val text = runCatching {
+            Toolkit.getDefaultToolkit().systemClipboard.getData(DataFlavor.stringFlavor) as? String
+        }.getOrNull()
+        if (text.isNullOrBlank()) {
+            val msg = listOf("The clipboard has no text.")
+            if (fromConvolution) convNotes = msg else eqNotes = msg
+        } else importFile({ text.encodeToByteArray() }, "", fromConvolution)
+    }
+    // The convolution filter's curve (a WAV's response takes a moment: worked out off the UI thread).
+    var convCurve by remember { mutableStateOf<FloatArray?>(null) }
+    LaunchedEffect(p.conv, p.convGainDb) {
+        convCurve = null
+        val f = p.conv
+        convCurve = withContext(Dispatchers.Default) {
+            when (f.kind) {
+                ConvKind.GRAPHIC -> GraphicEqParser.responseDb(f.graphic, EqProfile.plotFrequencies(), p.convGainDb)
+                ConvKind.IMPULSE -> ConvolutionFiles.load(f.irFile)?.responseDb(EqProfile.plotFrequencies(), p.convGainDb)
+                ConvKind.NONE -> null
+            }
         }
     }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
@@ -170,29 +218,28 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
                     on = p.eqOn, profile = p.eq, notes = eqNotes, saved = savedEqs,
                     onOn = { v -> onChange { it.copy(eqOn = v) } },
                     onProfile = { e -> eqNotes = emptyList(); onChange { it.copy(eq = e) } },
-                    onImportFile = {
-                        val dialog = FileDialog(null as Frame?, "Import EQ (ParametricEQ.txt)", FileDialog.LOAD)
-                        dialog.isVisible = true  // modal
-                        val dir = dialog.directory
-                        val name = dialog.file
-                        if (dir != null && name != null) {
-                            val text = runCatching { File(dir, name).readText() }.getOrNull()
-                            if (text == null) eqNotes = listOf("Couldn't open that file.")
-                            else importEq(text, name.substringBeforeLast('.').removeSuffix(" ParametricEQ").removeSuffix(" FixedBandEQ"))
-                        }
-                    },
-                    onPaste = {
-                        val text = runCatching {
-                            Toolkit.getDefaultToolkit().systemClipboard.getData(DataFlavor.stringFlavor) as? String
-                        }.getOrNull()
-                        if (text.isNullOrBlank()) eqNotes = listOf("The clipboard has no text.") else importEq(text, "")
-                    },
+                    onImportFile = { pickFile("Import EQ (ParametricEQ.txt)", fromConvolution = false) },
+                    onPaste = { pasteText(fromConvolution = false) },
                     onCopy = {
                         Toolkit.getDefaultToolkit().systemClipboard.setContents(StringSelection(p.eq.toApoText()), null)
                         eqNotes = listOf("Copied as EqualizerAPO text.")
                     },
                     onSave = { savedEqs = eqStore.save(p.eq); eqNotes = listOf("Saved “${p.eq.name}”.") },
                     onDelete = { name -> savedEqs = eqStore.delete(name) },
+                )
+            }
+            Section("Convolution EQ", on = p.enabled && p.convActive) {
+                ConvolutionEqEditor(
+                    on = p.convOn, filter = p.conv, gainDb = p.convGainDb, curveDb = convCurve, notes = convNotes,
+                    onOn = { v -> onChange { it.copy(convOn = v) } },
+                    onGain = { g -> onChange { it.copy(convGainDb = g) } },
+                    onImportFile = { pickFile("Import impulse response (WAV) or GraphicEQ", fromConvolution = true) },
+                    onPaste = { pasteText(fromConvolution = true) },
+                    onClear = {
+                        convNotes = emptyList()
+                        scope.launch(Dispatchers.IO) { ConvolutionFiles.clear() }
+                        onChange { it.copy(conv = ConvolutionFilter(), convOn = false) }
+                    },
                 )
             }
             Section("Output", on = p.enabled) {

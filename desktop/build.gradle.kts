@@ -21,7 +21,8 @@ dependencies {
 // Kotlin file, compiled here as well: both apps group, sort and search the library the same way.
 val sharedSources = tasks.register<Sync>("sharedSources") {
     from("../app/src/main/java") { include("com/allmeyn/player/library/Models.kt", "com/allmeyn/player/dsp/DspParams.kt", "com/allmeyn/player/library/PlaylistOps.kt",
-        "com/allmeyn/player/dsp/EqProfile.kt", "com/allmeyn/player/ui/HeadphoneEqEditor.kt") }
+        "com/allmeyn/player/dsp/EqProfile.kt", "com/allmeyn/player/ui/HeadphoneEqEditor.kt",
+        "com/allmeyn/player/dsp/ConvolutionEq.kt", "com/allmeyn/player/dsp/ConvolutionFiles.kt") }
     into(layout.buildDirectory.dir("shared-src"))
 }
 kotlin.sourceSets.main { kotlin.srcDir(sharedSources) }

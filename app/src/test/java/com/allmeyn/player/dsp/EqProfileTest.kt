@@ -85,7 +85,8 @@ class EqProfileTest {
     @Test fun nativeLayoutCarriesTheEq() {
         val p = DspParams(eqOn = true, eq = EqParser.parse(hd650).profile)
         val v = p.toNativeValues()
-        assertEquals(16 + 3 + 4 * 10, v.size)
+        assertEquals(16 + 3 + 4 * 10 + 1, v.size)  // … and the convolution switch last
+        assertEquals(0f, v.last())
         assertEquals(1f, v[16]); assertEquals(-6.1f, v[17]); assertEquals(10f, v[18])
         assertEquals(EqFilterType.LOW_SHELF.id.toFloat(), v[19]); assertEquals(105f, v[20])
         assertTrue(p.copy(enabled = true).processes)

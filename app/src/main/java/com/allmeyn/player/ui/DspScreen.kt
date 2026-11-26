@@ -37,7 +37,17 @@ import com.allmeyn.player.dsp.DspMeters
 import com.allmeyn.player.dsp.DspParams
 import com.allmeyn.player.dsp.DspProcessor
 import com.allmeyn.player.dsp.DspSettings
-import com.allmeyn.player.dsp.EqParser
+import com.allmeyn.player.dsp.ConvKind
+import com.allmeyn.player.dsp.ConvolutionFiles
+import com.allmeyn.player.dsp.ConvolutionFilter
+import com.allmeyn.player.dsp.importEqFile
+import com.allmeyn.player.dsp.EqProfile
+import com.allmeyn.player.dsp.GraphicEqParser
+import com.allmeyn.player.dsp.WavReader
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.allmeyn.player.dsp.EqProfileStore
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -69,24 +79,43 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
     val eqStore = remember { EqProfileStore(context.applicationContext) }
     var savedEqs by remember { mutableStateOf(eqStore.load()) }
     var eqNotes by remember { mutableStateOf<List<String>>(emptyList()) }
-    fun importEq(text: String, name: String) {
-        try {
-            val r = EqParser.parse(text, name)
-            onChange { it.copy(eq = r.profile, eqOn = true) }
-            eqNotes = listOf("Imported ${r.profile.bands.size} filters.") + r.notes
-        } catch (e: IllegalArgumentException) {
-            eqNotes = listOf(e.message ?: "Couldn't read that EQ.")
+    var convNotes by remember { mutableStateOf<List<String>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+    // Any EQ file, from either section (see importEqFile). Files are read and stored off the UI thread.
+    fun importFile(bytes: ByteArray, fileName: String, fromConvolution: Boolean) {
+        scope.launch {
+            val r = withContext(Dispatchers.IO) { importEqFile(bytes, fileName, fromConvolution) }
+            r.change?.let(onChange)
+            r.eqNotes?.let { eqNotes = it }
+            r.convNotes?.let { convNotes = it }
         }
     }
+    var importingForConvolution by remember { mutableStateOf(false) }
     val openEq = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         val name = context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
             if (c.moveToFirst()) c.getString(0) else null
-        }.orEmpty().substringBeforeLast('.').removeSuffix(" ParametricEQ").removeSuffix(" FixedBandEQ")
-        val text = runCatching {
-            context.contentResolver.openInputStream(uri)?.use { it.readBytes().take(1_000_000).toByteArray().decodeToString() }
+        }.orEmpty()
+        val bytes = runCatching {
+            context.contentResolver.openInputStream(uri)?.use { s -> s.readBytes().takeIf { it.size <= WavReader.MAX_BYTES } }
         }.getOrNull()
-        if (text == null) eqNotes = listOf("Couldn't open that file.") else importEq(text, name)
+        if (bytes == null) {
+            val msg = listOf("Couldn't open that file (or it's over 32 MB).")
+            if (importingForConvolution) convNotes = msg else eqNotes = msg
+        } else importFile(bytes, name, importingForConvolution)
+    }
+    // The convolution filter's curve (a WAV's response takes a moment: worked out off the UI thread).
+    var convCurve by remember { mutableStateOf<FloatArray?>(null) }
+    LaunchedEffect(p.conv, p.convGainDb) {
+        convCurve = null
+        val f = p.conv
+        convCurve = withContext(Dispatchers.Default) {
+            when (f.kind) {
+                ConvKind.GRAPHIC -> GraphicEqParser.responseDb(f.graphic, EqProfile.plotFrequencies(), p.convGainDb)
+                ConvKind.IMPULSE -> ConvolutionFiles.load(f.irFile)?.responseDb(EqProfile.plotFrequencies(), p.convGainDb)
+                ConvKind.NONE -> null
+            }
+        }
     }
     val clipboard = remember { context.getSystemService(ClipboardManager::class.java) }
     val listState = rememberLazyListState()
@@ -193,10 +222,10 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
                     on = p.eqOn, profile = p.eq, notes = eqNotes, saved = savedEqs,
                     onOn = { v -> onChange { it.copy(eqOn = v) } },
                     onProfile = { e -> eqNotes = emptyList(); onChange { it.copy(eq = e) } },
-                    onImportFile = { openEq.launch(arrayOf("text/*", "application/octet-stream")) },
+                    onImportFile = { importingForConvolution = false; openEq.launch(arrayOf("text/*", "audio/*", "application/octet-stream")) },
                     onPaste = {
                         val text = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
-                        if (text.isNullOrBlank()) eqNotes = listOf("The clipboard has no text.") else importEq(text, "")
+                        if (text.isNullOrBlank()) eqNotes = listOf("The clipboard has no text.") else importFile(text.encodeToByteArray(), "", false)
                     },
                     onCopy = {
                         clipboard?.setPrimaryClip(ClipData.newPlainText("EQ", p.eq.toApoText()))
@@ -204,6 +233,25 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
                     },
                     onSave = { savedEqs = eqStore.save(p.eq); eqNotes = listOf("Saved “${p.eq.name}”.") },
                     onDelete = { name -> savedEqs = eqStore.delete(name) },
+                )
+            }
+        }
+        item(key = "conv") {
+            Section("Convolution EQ", on = p.enabled && p.convActive) {
+                ConvolutionEqEditor(
+                    on = p.convOn, filter = p.conv, gainDb = p.convGainDb, curveDb = convCurve, notes = convNotes,
+                    onOn = { v -> onChange { it.copy(convOn = v) } },
+                    onGain = { g -> onChange { it.copy(convGainDb = g) } },
+                    onImportFile = { importingForConvolution = true; openEq.launch(arrayOf("audio/*", "text/*", "application/octet-stream")) },
+                    onPaste = {
+                        val text = clipboard?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.coerceToText(context)?.toString()
+                        if (text.isNullOrBlank()) convNotes = listOf("The clipboard has no text.") else importFile(text.encodeToByteArray(), "", true)
+                    },
+                    onClear = {
+                        convNotes = emptyList()
+                        scope.launch(Dispatchers.IO) { ConvolutionFiles.clear() }
+                        onChange { it.copy(conv = ConvolutionFilter(), convOn = false) }
+                    },
                 )
             }
         }

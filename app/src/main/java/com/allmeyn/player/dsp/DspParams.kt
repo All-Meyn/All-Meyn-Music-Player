@@ -38,6 +38,10 @@ data class DspParams(
     /** Headphone EQ (parametric, after the processors and before Volume / Soft Clip). */
     val eqOn: Boolean = false,
     val eq: EqProfile = EqProfile(),
+    /** Convolution EQ (right after the parametric one): an impulse response or a GraphicEQ. */
+    val convOn: Boolean = false,
+    val conv: ConvolutionFilter = ConvolutionFilter(),
+    val convGainDb: Float = 0f,          // -30..+10
     val order: List<DspProcessor> = listOf(DspProcessor.VOCAL, DspProcessor.COMPANDER, DspProcessor.BASS, DspProcessor.IMPACT),
 ) {
     /**
@@ -60,12 +64,16 @@ data class DspParams(
             airPercent = airPercent.coerceIn(0f, 100f),
             volumeDb = volumeDb.coerceIn(-40f, 10f),
             eq = eq.sanitized(),
+            convGainDb = convGainDb.coerceIn(-30f, 10f),
             order = fixedOrder,
         )
     }
 
     /** Whether the chain changes the audio at all (master on and something to do). */
-    val processes: Boolean get() = enabled && (companderOn || bassOn || impactOn || vocalOn || volumeDb != 0f || softClip || eqActive)
+    val processes: Boolean get() = enabled && (companderOn || bassOn || impactOn || vocalOn || volumeDb != 0f || softClip || eqActive || convActive)
+
+    /** The convolution EQ changes the audio (on, with a filter). */
+    val convActive: Boolean get() = convOn && conv.isSet
 
     /** The headphone EQ changes the audio (on, with filters or a preamp). */
     val eqActive: Boolean get() = eqOn && (eq.bands.isNotEmpty() || eq.preampDb != 0f)
@@ -80,6 +88,8 @@ data class DspParams(
         // 16..: headphone EQ: on, preamp, band count, then (type, Hz, dB, Q) per band
         if (eqOn) 1f else 0f, eq.preampDb, eq.bands.size.toFloat(),
         *eq.bands.flatMap { listOf(it.type.id.toFloat(), it.freqHz, it.gainDb, it.q) }.toFloatArray(),
+        // then: convolution on (the filter itself goes separately: NativeDsp.setConvolution)
+        if (convActive) 1f else 0f,
     )
 
     fun toNativeOrder() = order.map { it.id }.toIntArray()

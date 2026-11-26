@@ -22,6 +22,7 @@ object DspSettings {
     fun removeListener(l: (old: DspParams, new: DspParams) -> Unit) = listeners.remove(l)
 
     fun init(context: Context) {
+        ConvolutionFiles.init(java.io.File(context.filesDir, "convolution"))
         val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val d = DspParams()
         live = DspParams(
@@ -44,6 +45,15 @@ object DspSettings {
             softClip = p.getBoolean("softClip", d.softClip),
             eqOn = p.getBoolean("eqOn", d.eqOn),
             eq = p.getString("eqProfile", null)?.let { EqLibrary.decode(it).firstOrNull() } ?: d.eq,
+            convOn = p.getBoolean("convOn", d.convOn),
+            convGainDb = p.getFloat("convGainDb", d.convGainDb),
+            conv = ConvolutionFilter(
+                kind = ConvKind.entries.firstOrNull { it.name == p.getString("convKind", null) } ?: ConvKind.NONE,
+                name = p.getString("convName", "").orEmpty(),
+                irFile = p.getString("convFile", "").orEmpty(),
+                graphic = p.getString("convGraphic", null)?.let { runCatching { GraphicEqParser.parse(it) }.getOrNull() }.orEmpty(),
+                info = p.getString("convInfo", "").orEmpty(),
+            ),
             order = p.getString("order", null)?.split(',')
                 ?.mapNotNull { name -> DspProcessor.entries.firstOrNull { it.name == name } } ?: d.order,
         ).sanitized()
@@ -77,6 +87,13 @@ object DspSettings {
             .putString("order", new.order.joinToString(",") { it.name })
             .putBoolean("eqOn", new.eqOn)
             .putString("eqProfile", EqLibrary.encode(listOf(new.eq)))
+            .putBoolean("convOn", new.convOn)
+            .putFloat("convGainDb", new.convGainDb)
+            .putString("convKind", new.conv.kind.name)
+            .putString("convName", new.conv.name)
+            .putString("convFile", new.conv.irFile)
+            .putString("convGraphic", if (new.conv.graphic.isEmpty()) "" else GraphicEqParser.toText(new.conv.graphic))
+            .putString("convInfo", new.conv.info)
             .apply()
         listeners.forEach { it(old, new) }
     }
