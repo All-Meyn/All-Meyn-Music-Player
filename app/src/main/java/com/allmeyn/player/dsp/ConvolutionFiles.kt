@@ -18,17 +18,30 @@ object ConvolutionFiles {
 
     private fun dir() = root ?: error("ConvolutionFiles.init not called")
 
-    /** Stores [bytes] as [name] (replacing an older copy of that name); returns the stored name. */
+    /**
+     * Stores [bytes] for the filter called [name]; returns the stored file's name. Each import gets
+     * its own file (a different response of the same name doesn't replace one another output uses):
+     * call [prune] afterwards to drop the ones nothing uses.
+     */
     fun save(name: String, bytes: ByteArray): String {
         val d = dir().apply { mkdirs() }
-        val file = File(d, EqFiles.storageName(name))
-        val tmp = File(d, file.name + ".tmp")
-        tmp.writeBytes(bytes)
-        if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
+        val base = EqFiles.storageName(name).removeSuffix(".wav")
+        var file = File(d, "$base.wav")
+        var n = 2
+        while (file.exists() && !file.readBytes().contentEquals(bytes)) file = File(d, "$base ($n).wav").also { n++ }
+        if (!file.exists()) {
+            val tmp = File(d, file.name + ".tmp")
+            tmp.writeBytes(bytes)
+            if (!tmp.renameTo(file)) { file.delete(); tmp.renameTo(file) }
+        }
         synchronized(this) { if (cachedName == file.name) { cachedName = null; cached = null } }
-        // Only the filter in use is kept: older copies go.
-        d.listFiles()?.filter { it.name != file.name }?.forEach { it.delete() }
         return file.name
+    }
+
+    /** Deletes the stored responses not named in [keep] (the one in use, and those outputs remember). */
+    fun prune(keep: Set<String>) {
+        dir().listFiles()?.filter { it.name !in keep }?.forEach { it.delete() }
+        synchronized(this) { if (cachedName != null && cachedName !in keep) { cachedName = null; cached = null } }
     }
 
     /** The stored response [name], or null if it's gone or unreadable. */
@@ -45,10 +58,6 @@ object ConvolutionFiles {
         ir
     }
 
-    fun clear() {
-        dir().listFiles()?.forEach { it.delete() }
-        synchronized(this) { cachedName = null; cached = null }
-    }
 }
 
 /**

@@ -20,6 +20,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,7 +28,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -36,6 +39,9 @@ import com.allmeyn.player.dsp.ConvolutionFilter
 import com.allmeyn.player.dsp.EqBand
 import com.allmeyn.player.dsp.EqFilterType
 import com.allmeyn.player.dsp.EqProfile
+import com.allmeyn.player.dsp.OpraPreset
+import com.allmeyn.player.dsp.OutputId
+import com.allmeyn.player.dsp.OpraPresets
 import com.wexpa.liquidglass.material3.Slider
 import com.wexpa.liquidglass.material3.Switch
 import java.util.Locale
@@ -65,15 +71,25 @@ fun HeadphoneEqEditor(
     onCopy: () -> Unit,
     onSave: () -> Unit,
     onDelete: (String) -> Unit,
+    /** The bundled OPRA presets (read off the UI thread; cached by the caller). */
+    loadPresets: suspend () -> List<OpraPreset>,
+    opraLogo: ImageBitmap?,
 ) {
+    var picking by remember { mutableStateOf(false) }
+    var presets by remember { mutableStateOf<List<OpraPreset>?>(null) }
+    var picked by remember { mutableStateOf<OpraPreset?>(null) }
+    if (picking) {
+        LaunchedEffect(Unit) { if (presets == null) presets = runCatching { loadPresets() }.getOrDefault(emptyList()) }
+        OpraPresetPicker(presets, opraLogo, onPick = { p -> picking = false; picked = p; onProfile(p.profile) }, onDismiss = { picking = false })
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("On", Modifier.weight(1f), fontWeight = FontWeight.Medium)
             Switch(checked = on, onCheckedChange = onOn)
         }
         Text(
-            "Corrects your headphones' frequency response. Import an AutoEq / EqualizerAPO " +
-                "ParametricEQ.txt, paste one, or set the filters yourself.",
+            "Corrects your headphones' frequency response. Find your headphones in OPRA's presets, import an " +
+                "AutoEq / EqualizerAPO ParametricEQ.txt, paste one, or set the filters yourself.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         OutlinedTextField(
@@ -81,6 +97,7 @@ fun HeadphoneEqEditor(
             label = { Text("Profile name") }, modifier = Modifier.fillMaxWidth(),
         )
         FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+            TextButton(onClick = { picking = true }) { Text("Find headphones…") }
             TextButton(onClick = onImportFile) { Text("Import file…") }
             TextButton(onClick = onPaste) { Text("Paste") }
             TextButton(onClick = onCopy, enabled = profile.bands.isNotEmpty()) { Text("Copy") }
@@ -101,6 +118,18 @@ fun HeadphoneEqEditor(
             TextButton(onClick = { onProfile(EqProfile()) }, enabled = profile.bands.isNotEmpty() || profile.preampDb != 0f) { Text("Clear") }
         }
         notes.forEach { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
+        // The preset's creator, more prominent than OPRA (as OPRA asks), while it's the one in use.
+        picked?.takeIf { it.profile.name == profile.name }?.let { p ->
+            Column {
+                Text("Preset created by ${p.author}", style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                val uri = LocalUriHandler.current
+                Text(
+                    "Distributed by OPRA (CC BY-SA 4.0)",
+                    Modifier.clickable { runCatching { uri.openUri(OpraPresets.REPO_URL) } },
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
 
         EqCurve(profile, Modifier.fillMaxWidth().height(150.dp))
 
@@ -250,6 +279,39 @@ fun ConvolutionEqEditor(
                 Text(String.format(Locale.ROOT, "%+.1f dB", gainDb), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
             }
             Slider(value = gainDb, valueRange = -30f..10f, onValueChange = { v -> onGain((v * 2).roundToInt() / 2f) })
+        }
+    }
+}
+
+/**
+ * The headphone EQ per output: on, each output (USB DAC, Bluetooth headphones, …) keeps its own
+ * Headphone EQ and Convolution EQ, and they come back when it's used again.
+ */
+@Composable
+fun OutputEqSection(
+    enabled: Boolean,
+    current: OutputId?,
+    remembered: List<OutputId>,
+    onEnabled: (Boolean) -> Unit,
+    onForget: (OutputId) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Remember EQ for each output", Modifier.weight(1f), fontWeight = FontWeight.Medium)
+            Switch(checked = enabled, onCheckedChange = onEnabled)
+        }
+        Text(
+            if (enabled) "Each output keeps its own Headphone EQ and Convolution EQ; switching outputs brings its EQ back. " +
+                "A new output starts with the EQ in use."
+            else "One EQ for every output.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text("Now playing to: ${current?.label ?: "—"}", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary)
+        if (enabled) remembered.filter { it.key != current?.key }.forEach { o ->
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(o.label, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { onForget(o) }) { Text("Forget") }
+            }
         }
     }
 }

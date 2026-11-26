@@ -43,6 +43,12 @@ import com.allmeyn.player.dsp.ConvolutionFilter
 import com.allmeyn.player.dsp.importEqFile
 import com.allmeyn.player.dsp.EqProfile
 import com.allmeyn.player.dsp.GraphicEqParser
+import com.allmeyn.player.dsp.OpraPresets
+import com.allmeyn.player.playback.OutputMonitor
+import androidx.compose.runtime.collectAsState
+import com.allmeyn.player.R
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.res.imageResource
 import com.allmeyn.player.dsp.WavReader
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -66,7 +72,7 @@ private val BAND_NAMES = listOf("LF", "LMF", "HMF", "HF")
  * Changes apply immediately and are saved.
  */
 @Composable
-fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
+fun DspScreen(params: DspParams, outputs: OutputMonitor, onChange: ((DspParams) -> DspParams) -> Unit) {
     var meters by remember { mutableStateOf<DspMeters?>(null) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -81,6 +87,11 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
     var eqNotes by remember { mutableStateOf<List<String>>(emptyList()) }
     var convNotes by remember { mutableStateOf<List<String>>(emptyList()) }
     val scope = rememberCoroutineScope()
+    // Stored impulse responses nothing uses any more (not the one in use, nor an output's) go.
+    fun pruneResponses() {
+        val keep = outputs.store.irFiles() + DspSettings.live.conv.irFile
+        scope.launch(Dispatchers.IO) { ConvolutionFiles.prune(keep) }
+    }
     // Any EQ file, from either section (see importEqFile). Files are read and stored off the UI thread.
     fun importFile(bytes: ByteArray, fileName: String, fromConvolution: Boolean) {
         scope.launch {
@@ -88,8 +99,13 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
             r.change?.let(onChange)
             r.eqNotes?.let { eqNotes = it }
             r.convNotes?.let { convNotes = it }
+            if (r.change != null) pruneResponses()
         }
     }
+    val currentOutput by outputs.current.collectAsState()
+    var outputsOn by remember { mutableStateOf(outputs.store.enabled) }
+    var remembered by remember { mutableStateOf(outputs.store.outputs()) }
+    LaunchedEffect(currentOutput, outputsOn) { remembered = outputs.store.outputs() }
     var importingForConvolution by remember { mutableStateOf(false) }
     val openEq = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -118,6 +134,7 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
         }
     }
     val clipboard = remember { context.getSystemService(ClipboardManager::class.java) }
+    val opraLogo = remember { runCatching { ImageBitmap.imageResource(context.resources, R.drawable.opra_logo) }.getOrNull() }
     val listState = rememberLazyListState()
     // The processor order is the draggable part of the list; everything else is fixed items.
     // Vocal & Detail Restoration is pinned first, so only the others are draggable.
@@ -216,6 +233,15 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
                 }
             }
         }
+        item(key = "outputs") {
+            Section("Per output", on = p.enabled && outputsOn) {
+                OutputEqSection(
+                    enabled = outputsOn, current = currentOutput, remembered = remembered,
+                    onEnabled = { v -> outputs.setEnabled(v); outputsOn = v; remembered = outputs.store.outputs() },
+                    onForget = { o -> outputs.store.forget(o.key); remembered = outputs.store.outputs(); pruneResponses() },
+                )
+            }
+        }
         item(key = "eq") {
             Section("Headphone EQ", on = p.enabled && p.eqActive) {
                 HeadphoneEqEditor(
@@ -233,6 +259,8 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
                     },
                     onSave = { savedEqs = eqStore.save(p.eq); eqNotes = listOf("Saved “${p.eq.name}”.") },
                     onDelete = { name -> savedEqs = eqStore.delete(name) },
+                    loadPresets = { withContext(Dispatchers.IO) { OpraPresets.load { context.assets.open(OpraPresets.ASSET) } } },
+                    opraLogo = opraLogo,
                 )
             }
         }
@@ -249,8 +277,8 @@ fun DspScreen(params: DspParams, onChange: ((DspParams) -> DspParams) -> Unit) {
                     },
                     onClear = {
                         convNotes = emptyList()
-                        scope.launch(Dispatchers.IO) { ConvolutionFiles.clear() }
                         onChange { it.copy(conv = ConvolutionFilter(), convOn = false) }
+                        pruneResponses()
                     },
                 )
             }

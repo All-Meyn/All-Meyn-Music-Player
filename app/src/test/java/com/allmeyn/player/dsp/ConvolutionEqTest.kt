@@ -118,10 +118,18 @@ class ConvolutionEqTest {
             assertEquals(2, ir.channels.size)
             assertEquals(1f, p.toNativeValues().last())
 
-            // A newer import replaces the stored copy.
+            // Each import keeps its own copy (another output may use the first); prune drops the unused.
             val r2 = importEqFile(wav(48000, 1, 16, 1, listOf(1.0)), "Other.wav", fromConvolution = true)
             val p2 = r2.change!!(p)
+            assertEquals(setOf(p.conv.irFile, p2.conv.irFile), dir.list()!!.toSet())
+            ConvolutionFiles.prune(setOf(p2.conv.irFile))
             assertEquals(listOf(p2.conv.irFile), dir.list()!!.toList())
+
+            // A different response with the same name doesn't replace the first; the same one is reused.
+            val a = ConvolutionFiles.save("Same", wav(48000, 1, 16, 1, listOf(1.0)))
+            val b = ConvolutionFiles.save("Same", wav(48000, 1, 16, 1, listOf(0.5)))
+            assertEquals("Same.wav", a); assertEquals("Same (2).wav", b)
+            assertEquals(a, ConvolutionFiles.save("Same", wav(48000, 1, 16, 1, listOf(1.0))))
 
             // A bad file changes nothing and says why in the section it came from.
             val bad = importEqFile("nonsense".toByteArray(), "x.txt", fromConvolution = true)

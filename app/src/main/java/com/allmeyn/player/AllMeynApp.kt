@@ -6,6 +6,7 @@ import com.allmeyn.player.audio.AllMeynRenderersFactory
 import com.allmeyn.player.library.MusicLibrary
 import com.allmeyn.player.library.PlaylistStore
 import com.allmeyn.player.dsp.DspSettings
+import com.allmeyn.player.playback.OutputMonitor
 import com.allmeyn.player.playback.ReplayGain
 import com.allmeyn.player.plugin.LevelMeterPlugin
 import com.allmeyn.player.plugin.PluginHost
@@ -16,6 +17,10 @@ import com.allmeyn.player.usb.UsbDacManager
 class AllMeynApp : Application() {
 
     lateinit var usbDac: UsbDacManager
+        private set
+
+    /** The output in use, and the headphone EQ that follows it. */
+    lateinit var outputs: OutputMonitor
         private set
 
     /** Custom USB audio driver; app-scoped so a running stream survives activity recreation. */
@@ -35,6 +40,7 @@ class AllMeynApp : Application() {
         ReplayGain.init(this)
         DspSettings.init(this)
         usbDac = UsbDacManager(this, AllMeynRenderersFactory.FLOAT_OUTPUT).also { it.start() }
+        outputs = OutputMonitor(this, usbDriver).also { it.start() }
         PluginHost.register(levelMeter)
         // Re-enable the USB driver now if it was left on and the DAC is already plugged in.
         usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
