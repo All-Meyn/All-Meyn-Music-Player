@@ -94,11 +94,6 @@ class MainActivity : ComponentActivity() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller by mutableStateOf<MediaController?>(null)
 
-    companion object {
-        /** The media notification's tap (PlaybackService's session activity). */
-        const val ACTION_OPEN_NOW_PLAYING = "com.allmeyn.player.OPEN_NOW_PLAYING"
-    }
-
     /** Bumped by each tap on the media notification (ACTION_OPEN_NOW_PLAYING): opens Now playing. */
     private var openNowPlaying by mutableIntStateOf(0)
 
@@ -170,8 +165,11 @@ private fun AllMeynTheme(overlay: @Composable () -> Unit = {}, content: @Composa
     }
 }
 
+/** The media notification's tap (PlaybackService's session activity). */
+const val ACTION_OPEN_NOW_PLAYING = "com.allmeyn.player.OPEN_NOW_PLAYING"
+
 private fun Intent?.opensNowPlaying() =
-    this?.action == MainActivity.ACTION_OPEN_NOW_PLAYING && flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0
+    this?.action == ACTION_OPEN_NOW_PLAYING && flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0
 
 private enum class Tab(val label: String) { Albums("Albums"), Artists("Artists"), Songs("Songs"), Playlists("Playlists"), Folders("Folders") }
 

@@ -2,6 +2,7 @@ package com.allmeyn.player.playback
 
 import android.app.PendingIntent
 import android.content.Intent
+import com.allmeyn.player.ui.ACTION_OPEN_NOW_PLAYING
 import com.allmeyn.player.ui.MainActivity
 import android.content.SharedPreferences
 import androidx.media3.common.Tracks
@@ -80,7 +81,7 @@ class PlaybackService : MediaSessionService() {
                 PendingIntent.getActivity(
                     this, 0,
                     Intent(this, MainActivity::class.java)
-                        .setAction(MainActivity.ACTION_OPEN_NOW_PLAYING)
+                        .setAction(ACTION_OPEN_NOW_PLAYING)
                         .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
                     PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                 ),
