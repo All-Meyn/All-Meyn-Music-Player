@@ -24,24 +24,31 @@ import kotlin.math.roundToInt
 // Shared by the Android and Windows apps (desktop/build.gradle.kts, sharedSources).
 
 /**
- * Settings → Appearance → Glass frosting, 0 (clear) – 100 (frosted); 50 is the glass library's own
- * look. Snapshot state: every glass component drawn with [AppGlass] follows a change at once. Each
+ * Settings → Appearance → Glass frosting, 0 (the clearest glass that still reads well) – 100 (heavy
+ * frost); [DEFAULT] (35) is the glass library's own look. Snapshot state: every glass component drawn with [AppGlass] follows a change at once. Each
  * app loads and saves it (BackdropSettings) and sets [level] at start.
  */
 object GlassFrost {
-    const val DEFAULT = 50
+    const val DEFAULT = 35
     var level by mutableIntStateOf(DEFAULT)
 
-    fun label(v: Int) = when (v) { 0 -> "Clear"; 100 -> "Frosted"; else -> "$v %" }
+    fun label(v: Int) = when (v) { 0 -> "Clearest"; DEFAULT -> "Standard"; 100 -> "Frosted"; else -> "$v %" }
+
+    /** [from] at 0, [standard] at [DEFAULT], [to] at 100, straight lines between. */
+    internal fun scale(frost: Int, from: Float, standard: Float, to: Float): Float =
+        if (frost <= DEFAULT) from + (standard - from) * frost / DEFAULT
+        else standard + (to - standard) * (frost - DEFAULT) / (100 - DEFAULT)
 }
 
 /**
  * The glass the app's components draw with: the library's Material defaults (GlassMaterialDefaults,
- * Liquid Glass 1.0.0) with the frost set by [GlassFrost]. At 50 they are the library's exactly:
+ * Liquid Glass 1.0.0) with the frost set by [GlassFrost]. At the default (35) they are the library's
+ * exactly:
  * - the material is GlassStyle.inApp at a Tint Amount of 25 – 100 (iOS's Clear … Tinted: how opaque
- *   the tint is and how much of the backdrop's detail it softens; 50 at 50);
- * - panels (dialogs, menus, sheets) blur what's behind them by 5 – 13.4 dp (7.7 at 50, the library's);
- * - controls get a backdrop blur only above 50 (up to 6 dp), as frosted glass.
+ *   the tint is and how much of the backdrop's detail it softens; the library's 50 at the default);
+ * - panels (dialogs, menus, sheets) blur what's behind them by 5 – 13.4 dp (the library's 7.7 at the
+ *   default); less than 5 let what's behind compete with their text;
+ * - controls get a backdrop blur only above the default (up to 6 dp), as frosted glass.
  * The tab bar and the top bar's buttons keep the library's fixed glass (it has no setting for them).
  */
 object AppGlass {
@@ -50,11 +57,9 @@ object AppGlass {
 
     private fun set(frost: Int): Kinds = synchronized(cache) {
         cache.getOrPut(frost) {
-            // Below 50 the range is halved (Tint Amount 25 – 50, panel blur 5 – 7.7 dp): fully clear
-            // glass let what's behind a panel compete with its text (0 % was unreadable).
-            val t = if (frost < 50) 25f + frost / 2f else frost.toFloat()
-            val controlBlur = if (frost > 50) (6f * (frost - 50) / 50f).dp else Dp.Unspecified
-            val panelBlur = (if (frost < 50) 5f + 2.7f * frost / 50f else 7.7f + 5.7f * (frost - 50) / 50f).dp
+            val t = GlassFrost.scale(frost, 25f, 50f, 100f)
+            val controlBlur = if (frost > GlassFrost.DEFAULT) GlassFrost.scale(frost, 0f, 0f, 6f).dp else Dp.Unspecified
+            val panelBlur = GlassFrost.scale(frost, 5f, 7.7f, 13.4f).dp
             fun style(dark: Boolean) = ios27Rim(GlassStyle.inApp(dark, tintAmount = t), dark)
             Kinds(
                 control = Glass(style(false).copy(backdropSigma = controlBlur), dark = style(true).copy(backdropSigma = controlBlur), light = Overhead),
@@ -63,7 +68,7 @@ object AppGlass {
         }
     }
 
-    /** The plain and panel glass at [frost] (for tests: at 50 they're the library's). */
+    /** The plain and panel glass at [frost] (for tests: at the default they're the library's). */
     internal fun control(frost: Int): Glass = set(frost).control
     internal fun panel(frost: Int): Glass = set(frost).panel
 
@@ -127,8 +132,8 @@ fun GlassFrostSetting(value: Int, onChange: (Int) -> Unit) {
             Text(GlassFrost.label(value), color = MaterialTheme.colorScheme.primary)
         }
         Text(
-            "How frosted the glass buttons, menus, dialogs and sheets are: clear shows more of what's behind them " +
-                "(still readable), frosted blurs it more. 50 % is the standard look.",
+            "How frosted the glass buttons, menus, dialogs and sheets are: lower shows more of what's behind them " +
+                "(still readable), higher blurs it more. Standard is 35 %.",
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Slider(

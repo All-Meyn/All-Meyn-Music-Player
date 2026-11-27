@@ -8,13 +8,13 @@ import org.junit.Test
 
 class GlassFrostTest {
     // The default frost is the library's own glass: nothing changes until the slider moves.
-    @Test fun fiftyIsTheLibrarysLook() {
-        assertEquals(GlassMaterialDefaults.control.style(false), AppGlass.control(50).style(false))
-        assertEquals(GlassMaterialDefaults.control.style(true), AppGlass.control(50).style(true))
-        assertEquals(GlassMaterialDefaults.panel.style(false), AppGlass.panel(50).style(false))
-        assertEquals(GlassMaterialDefaults.panel.style(true), AppGlass.panel(50).style(true))
-        assertEquals(GlassMaterialDefaults.control.light(false), AppGlass.control(50).light(false))
-        assertEquals(GlassMaterialDefaults.control, AppGlass.control(50))
+    @Test fun theDefaultIsTheLibrarysLook() {
+        assertEquals(GlassMaterialDefaults.control.style(false), AppGlass.control(GlassFrost.DEFAULT).style(false))
+        assertEquals(GlassMaterialDefaults.control.style(true), AppGlass.control(GlassFrost.DEFAULT).style(true))
+        assertEquals(GlassMaterialDefaults.panel.style(false), AppGlass.panel(GlassFrost.DEFAULT).style(false))
+        assertEquals(GlassMaterialDefaults.panel.style(true), AppGlass.panel(GlassFrost.DEFAULT).style(true))
+        assertEquals(GlassMaterialDefaults.control.light(false), AppGlass.control(GlassFrost.DEFAULT).light(false))
+        assertEquals(GlassMaterialDefaults.control, AppGlass.control(GlassFrost.DEFAULT))
     }
 
     @Test fun moreFrostBlursMoreAndIsMoreOpaque() {
@@ -30,11 +30,21 @@ class GlassFrostTest {
     @Test fun clearStaysReadable() {
         val clear = AppGlass.panel(0).style(true)!!
         assertTrue(clear.backdropSigma.value >= 5f)
-        assertTrue(clear.backdropSigma < AppGlass.panel(50).style(true)!!.backdropSigma)
+        assertTrue(clear.backdropSigma < AppGlass.panel(GlassFrost.DEFAULT).style(true)!!.backdropSigma)
+    }
+
+    // Even steps: every 5 % step changes the panel blur and the tint.
+    @Test fun everyStepChangesSomething() {
+        for (f in 0 until 100 step 5) {
+            val a = AppGlass.panel(f).style(true)!!
+            val b = AppGlass.panel(f + 5).style(true)!!
+            assertTrue("$f", b.backdropSigma > a.backdropSigma && b.tint.alpha >= a.tint.alpha)
+        }
     }
 
     @Test fun labels() {
-        assertEquals("Clear", GlassFrost.label(0))
+        assertEquals("Clearest", GlassFrost.label(0))
+        assertEquals("Standard", GlassFrost.label(35))
         assertEquals("55 %", GlassFrost.label(55))
         assertEquals("Frosted", GlassFrost.label(100))
     }
