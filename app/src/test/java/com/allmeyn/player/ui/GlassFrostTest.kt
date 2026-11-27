@@ -26,6 +26,13 @@ class GlassFrostTest {
         assertNotEquals(AppGlass.control(0), AppGlass.control(100))
     }
 
+    // Clear keeps enough blur and tint to read text on a panel (0 % was unreadable at 2 dp).
+    @Test fun clearStaysReadable() {
+        val clear = AppGlass.panel(0).style(true)!!
+        assertTrue(clear.backdropSigma.value >= 5f)
+        assertTrue(clear.backdropSigma < AppGlass.panel(50).style(true)!!.backdropSigma)
+    }
+
     @Test fun labels() {
         assertEquals("Clear", GlassFrost.label(0))
         assertEquals("55 %", GlassFrost.label(55))
