@@ -94,6 +94,14 @@ class MainActivity : ComponentActivity() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller by mutableStateOf<MediaController?>(null)
 
+    companion object {
+        /** The media notification's tap (PlaybackService's session activity). */
+        const val ACTION_OPEN_NOW_PLAYING = "com.allmeyn.player.OPEN_NOW_PLAYING"
+    }
+
+    /** Bumped by each tap on the media notification (ACTION_OPEN_NOW_PLAYING): opens Now playing. */
+    private var openNowPlaying by mutableIntStateOf(0)
+
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
@@ -103,6 +111,8 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        // Opened from the media notification (not a recreation, nor from Recents, which replays the intent).
+        if (savedInstanceState == null && intent.opensNowPlaying()) openNowPlaying++
         val app = application as AllMeynApp
         // Launched by plugging in the DAC ("Always open All-Meyn"): permission is granted now.
         app.usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
@@ -111,13 +121,14 @@ class MainActivity : ComponentActivity() {
             // drawn over everything else inside LiquidGlassTheme, so inside it the glass buttons
             // and bars showed through the intro.
             AllMeynTheme(overlay = { StartupOverlay() }) {
-                ProvideWindowSize { AppRoot(controller, app) }
+                ProvideWindowSize { AppRoot(controller, app, openNowPlaying) }
             }
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.opensNowPlaying()) openNowPlaying++
         (application as AllMeynApp).usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
     }
 
@@ -159,12 +170,15 @@ private fun AllMeynTheme(overlay: @Composable () -> Unit = {}, content: @Composa
     }
 }
 
+private fun Intent?.opensNowPlaying() =
+    this?.action == MainActivity.ACTION_OPEN_NOW_PLAYING && flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0
+
 private enum class Tab(val label: String) { Albums("Albums"), Artists("Artists"), Songs("Songs"), Playlists("Playlists"), Folders("Folders") }
 
 @UnstableApi
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
+private fun AppRoot(controller: MediaController?, app: AllMeynApp, openNowPlaying: Int) {
     val player = rememberPlayerUi(controller)
     val library by app.library.state.collectAsStateWithLifecycle()
     val driver by app.usbDriver.state.collectAsStateWithLifecycle()
@@ -184,6 +198,14 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     // keeps its own scroll position and dialogs in the state holder while it is on the stack.
     val stack = rememberSaveable(saver = RouteStackSaver) { mutableStateListOf<Route>() }
     val top = stack.lastOrNull()
+    // A tap on the media notification: Now playing, once the player is connected and has a song.
+    var handledNowPlaying by remember { mutableIntStateOf(0) }  // lives as long as the activity's counter
+    LaunchedEffect(openNowPlaying, player.hasMedia) {
+        if (openNowPlaying > handledNowPlaying && player.hasMedia) {
+            handledNowPlaying = openNowPlaying
+            if (stack.lastOrNull() != Route.NowPlayingRoute) stack.add(Route.NowPlayingRoute)
+        }
+    }
     // Glass that appears in a page draws over the bars (GlassStacking): the bars enter composition
     // again after it. Right after a tab or screen change that waits for the tab bar's lens to finish
     // sliding (rebuilding the bar would cut it short); while scrolling it's at once.
