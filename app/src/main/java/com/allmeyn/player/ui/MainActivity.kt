@@ -180,6 +180,10 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     fun added(name: String, n: Int) = Toast.makeText(context, "Added ${countOf(n, "song")} to $name", Toast.LENGTH_SHORT).show()
 
     var tab by rememberSaveable { mutableStateOf(Tab.Albums) }
+    // Saved, so folding, unfolding or rotating keeps the open screen; each screen (and each tab)
+    // keeps its own scroll position and dialogs in the state holder while it is on the stack.
+    val stack = rememberSaveable(saver = RouteStackSaver) { mutableStateListOf<Route>() }
+    val top = stack.lastOrNull()
     // Glass that appears in a page draws over the bars (GlassStacking): the bars enter composition
     // again after it. Right after a tab or screen change that waits for the tab bar's lens to finish
     // sliding (rebuilding the bar would cut it short); while scrolling it's at once.
@@ -193,10 +197,6 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
         if (sinceNav < 450) delay(450 - sinceNav)
         barsKey++
     }
-    // Saved, so folding, unfolding or rotating keeps the open screen; each screen (and each tab)
-    // keeps its own scroll position and dialogs in the state holder while it is on the stack.
-    val stack = rememberSaveable(saver = RouteStackSaver) { mutableStateListOf<Route>() }
-    val top = stack.lastOrNull()
     val screenStates = rememberSaveableStateHolder()
     fun screenKey(depth: Int, r: Route?) = if (r == null) "tab:${tab.name}" else "$depth:${r.encode()}"
     fun pop() {
