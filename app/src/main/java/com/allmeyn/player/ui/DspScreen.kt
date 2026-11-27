@@ -302,7 +302,7 @@ fun DspScreen(params: DspParams, outputs: OutputMonitor, onChange: ((DspParams) 
             }
         }
         item(key = "reset") {
-            OutlinedButton(onClick = { onChange { DspParams(enabled = it.enabled) } }) { Text("Reset to defaults") }
+            OutlinedButton(onClick = { onChange { DspParams(enabled = it.enabled) } }, glass = AppGlass.regular) { Text("Reset to defaults") }
         }
     }
 }

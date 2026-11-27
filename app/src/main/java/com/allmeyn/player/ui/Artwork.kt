@@ -182,6 +182,12 @@ object BackdropSettings {
     fun setStrength(context: Context, value: Int) {
         prefs(context).edit().putInt("backdrop_strength", value.coerceIn(0, 100)).apply()
     }
+
+    /** Settings → Appearance → Glass frosting, 0–100 (GlassFrost). */
+    fun frost(context: Context): Int = prefs(context).getInt("glass_frost", GlassFrost.DEFAULT).coerceIn(0, 100)
+    fun setFrost(context: Context, value: Int) {
+        prefs(context).edit().putInt("glass_frost", value.coerceIn(0, 100)).apply()
+    }
 }
 
 private object BackdropMemory {

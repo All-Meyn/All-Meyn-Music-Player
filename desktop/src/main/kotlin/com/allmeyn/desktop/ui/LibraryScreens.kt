@@ -1,5 +1,6 @@
 package com.allmeyn.desktop.ui
 
+import com.allmeyn.player.ui.AppGlass
 import androidx.compose.foundation.ContextMenuArea
 import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.clickable
@@ -90,11 +91,11 @@ fun EmptyLibrary(library: DesktopLibrary, onChooseFolder: () -> Unit) {
                 progress != null -> Text("Reading your music… ${progress.first} / ${progress.second}")
                 library.folders.isEmpty() -> {
                     Text("Choose the folder your music is in to get started.")
-                    Button(onClick = onChooseFolder) { Text("Choose music folder…") }
+                    Button(onClick = onChooseFolder, glass = AppGlass.prominent()) { Text("Choose music folder…") }
                 }
                 else -> {
                     Text("No music found in your folders.")
-                    OutlinedButton(onClick = onChooseFolder) { Text("Add another folder…") }
+                    OutlinedButton(onClick = onChooseFolder, glass = AppGlass.regular) { Text("Add another folder…") }
                 }
             }
         }
@@ -159,8 +160,8 @@ fun AlbumPage(album: Album, player: PlayerController, onBack: () -> Unit) {
 fun PlayShuffle(tracks: List<Track>, player: PlayerController) {
     val addTo = LocalAddToPlaylist.current
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 8.dp)) {
-        Button(onClick = { player.play(tracks) }) { Text("Play") }
-        OutlinedButton(onClick = { player.play(tracks, shuffle = true) }) { Text("Shuffle") }
+        Button(onClick = { player.play(tracks) }, glass = AppGlass.prominent()) { Text("Play") }
+        OutlinedButton(onClick = { player.play(tracks, shuffle = true) }, glass = AppGlass.regular) { Text("Shuffle") }
         TextButton(onClick = { addTo(tracks) }) { Text("Add to playlist…") }
     }
 }
@@ -259,7 +260,7 @@ fun QueueScreen(player: PlayerController) {
                 Box(Modifier.weight(1f)) { ScreenTitle("Queue") }
                 val addTo = LocalAddToPlaylist.current
                 if (player.queue.isNotEmpty()) TextButton(onClick = { addTo(player.queue) }) { Text("Save as playlist…") }
-                if (player.queue.size > 1) OutlinedButton(onClick = player::clearOthers) { Text("Clear others") }
+                if (player.queue.size > 1) OutlinedButton(onClick = player::clearOthers, glass = AppGlass.regular) { Text("Clear others") }
             }
             if (player.queue.isEmpty()) Text("Nothing queued. Play an album or a song from your library.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

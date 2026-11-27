@@ -1,5 +1,6 @@
 package com.allmeyn.desktop.ui
 
+import com.allmeyn.player.ui.AppGlass
 import androidx.compose.foundation.ContextMenuItem
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -53,7 +54,7 @@ fun PlaylistsScreen(playlists: DesktopPlaylists, view: LibraryView, onOpen: (Pla
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.weight(1f)) { ScreenTitle("Playlists") }
-                Button(onClick = { naming = true }) { Text("New playlist") }
+                Button(onClick = { naming = true }, glass = AppGlass.prominent()) { Text("New playlist") }
             }
             if (playlists.all.isEmpty()) {
                 Text(
@@ -103,8 +104,8 @@ fun PlaylistPage(playlist: Playlist, playlists: DesktopPlaylists, view: LibraryV
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(top = 8.dp, bottom = 12.dp)) {
-                Button(onClick = { player.play(songs) }, enabled = songs.isNotEmpty()) { Text("Play") }
-                OutlinedButton(onClick = { player.play(songs, shuffle = true) }, enabled = songs.isNotEmpty()) { Text("Shuffle") }
+                Button(onClick = { player.play(songs) }, enabled = songs.isNotEmpty(), glass = AppGlass.prominent()) { Text("Play") }
+                OutlinedButton(onClick = { player.play(songs, shuffle = true) }, enabled = songs.isNotEmpty(), glass = AppGlass.regular) { Text("Shuffle") }
                 TextButton(onClick = { renaming = true }) { Text("Rename") }
                 TextButton(onClick = { deleting = true }) { Text("Delete") }
             }
@@ -138,6 +139,7 @@ fun PlaylistPage(playlist: Playlist, playlists: DesktopPlaylists, view: LibraryV
         playlists.rename(playlist.id, name)
     }
     if (deleting) AlertDialog(
+        glass = AppGlass.panel,
         onDismissRequest = { deleting = false },
         title = { Text("Delete “${playlist.name}”?") },
         text = { Text("The playlist goes; the songs stay in your library.") },
@@ -152,6 +154,7 @@ fun AddToPlaylistDialog(tracks: List<Track>, playlists: DesktopPlaylists, onDone
     var name by remember { mutableStateOf("") }
     val what = if (tracks.size == 1) "“${tracks[0].title}”" else "${tracks.size} songs"
     AlertDialog(
+        glass = AppGlass.panel,
         onDismissRequest = { onDone(null) },
         title = { Text("Add $what to a playlist") },
         text = {
@@ -182,6 +185,7 @@ fun AddToPlaylistDialog(tracks: List<Track>, playlists: DesktopPlaylists, onDone
 private fun NameDialog(title: String, initial: String, confirm: String, onDismiss: () -> Unit, onConfirm: (String) -> Unit) {
     var name by remember { mutableStateOf(initial) }
     AlertDialog(
+        glass = AppGlass.panel,
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = { OutlinedTextField(name, { name = it }, singleLine = true, placeholder = { Text("Name") }) },

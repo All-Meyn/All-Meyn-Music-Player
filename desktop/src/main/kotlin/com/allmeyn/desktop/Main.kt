@@ -41,6 +41,7 @@ private val appIcon: ImageBitmap? by lazy {
 }
 
 fun main() = application {
+    remember { com.allmeyn.player.ui.GlassFrost.level = com.allmeyn.desktop.ui.BackdropSettings.frost() }  // before anything draws
     val library = remember { DesktopLibrary() }
     val appScope = rememberCoroutineScope()
     val player = remember { PlayerController(appScope) }

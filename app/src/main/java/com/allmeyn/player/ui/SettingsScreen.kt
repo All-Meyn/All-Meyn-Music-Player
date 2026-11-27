@@ -70,6 +70,8 @@ fun SettingsScreen(
     onReplayGain: (ReplayGain.Mode) -> Unit,
     backdropStrength: Int,
     onBackdropStrength: (Int) -> Unit,
+    glassFrost: Int,
+    onGlassFrost: (Int) -> Unit,
     dspOn: Boolean,
     onOpenDsp: () -> Unit,
     onProbe: ((String) -> Unit) -> Unit,
@@ -94,8 +96,8 @@ fun SettingsScreen(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onAddFolder) { Text("Add folder") }
-                OutlinedButton(onClick = onRescan, enabled = !library.scanning && library.folders.isNotEmpty()) { Text("Rescan") }
+                Button(onClick = onAddFolder, glass = AppGlass.prominent()) { Text("Add folder") }
+                OutlinedButton(onClick = onRescan, enabled = !library.scanning && library.folders.isNotEmpty(), glass = AppGlass.regular) { Text("Rescan") }
             }
             Text(
                 if (library.scanning) library.progress else "${countOf(library.tracks.size, "song")} · ${countOf(library.albums.size, "album")}",
@@ -113,7 +115,7 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }
-                OutlinedButton(onClick = onOpenDsp) { Text("Open") }
+                OutlinedButton(onClick = onOpenDsp, glass = AppGlass.regular) { Text("Open") }
             }
             Text("ReplayGain", fontWeight = FontWeight.Medium)
             Text(
@@ -126,6 +128,7 @@ fun SettingsScreen(
                     FilterChip(
                         selected = replayGain == m,
                         onClick = { onReplayGain(m) },
+                        glass = if (replayGain == m) AppGlass.prominent() else AppGlass.regular,
                         label = { Text(m.name.lowercase().replaceFirstChar { it.uppercase() }) },
                     )
                 }
@@ -147,6 +150,7 @@ fun SettingsScreen(
                 valueRange = 0f..100f,
                 steps = 19,
             )
+            GlassFrostSetting(glassFrost, onGlassFrost)
         }
         Section("Output") {
             if (driver.active) {
@@ -213,10 +217,10 @@ fun SettingsScreen(
                 Text(driverStatus, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
             }
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = { probe = "Probing…"; onProbe { probe = it } }) { Text("Probe DAC") }
+                OutlinedButton(onClick = { probe = "Probing…"; onProbe { probe = it } }, glass = AppGlass.regular) { Text("Probe DAC") }
                 if (driver.active) {
-                    OutlinedButton(onClick = { onTone(44100, 16) }) { Text("Tone 44.1/16") }
-                    OutlinedButton(onClick = { onTone(96000, 32) }) { Text("96/32") }
+                    OutlinedButton(onClick = { onTone(44100, 16) }, glass = AppGlass.regular) { Text("Tone 44.1/16") }
+                    OutlinedButton(onClick = { onTone(96000, 32) }, glass = AppGlass.regular) { Text("96/32") }
                 }
             }
             if (probe.isNotEmpty()) {

@@ -50,6 +50,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -92,14 +94,20 @@ class MainActivity : ComponentActivity() {
     private var controllerFuture: ListenableFuture<MediaController>? = null
     private var controller by mutableStateOf<MediaController?>(null)
 
+    /** Bumped by each tap on the media notification (ACTION_OPEN_NOW_PLAYING): opens Now playing. */
+    private var openNowPlaying by mutableIntStateOf(0)
+
     private val notificationPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        GlassFrost.level = BackdropSettings.frost(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
+        // Opened from the media notification (not a recreation, nor from Recents, which replays the intent).
+        if (savedInstanceState == null && intent.opensNowPlaying()) openNowPlaying++
         val app = application as AllMeynApp
         // Launched by plugging in the DAC ("Always open All-Meyn"): permission is granted now.
         app.usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
@@ -108,13 +116,14 @@ class MainActivity : ComponentActivity() {
             // drawn over everything else inside LiquidGlassTheme, so inside it the glass buttons
             // and bars showed through the intro.
             AllMeynTheme(overlay = { StartupOverlay() }) {
-                ProvideWindowSize { AppRoot(controller, app) }
+                ProvideWindowSize { AppRoot(controller, app, openNowPlaying) }
             }
         }
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.opensNowPlaying()) openNowPlaying++
         (application as AllMeynApp).usbDriver.maybeAutoEnable(UsbAudioDriver.ATTACH_SETTLE_MS)
     }
 
@@ -156,12 +165,18 @@ private fun AllMeynTheme(overlay: @Composable () -> Unit = {}, content: @Composa
     }
 }
 
+/** The media notification's tap (PlaybackService's session activity). */
+const val ACTION_OPEN_NOW_PLAYING = "com.allmeyn.player.OPEN_NOW_PLAYING"
+
+private fun Intent?.opensNowPlaying() =
+    this?.action == ACTION_OPEN_NOW_PLAYING && flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY == 0
+
 private enum class Tab(val label: String) { Albums("Albums"), Artists("Artists"), Songs("Songs"), Playlists("Playlists"), Folders("Folders") }
 
 @UnstableApi
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
+private fun AppRoot(controller: MediaController?, app: AllMeynApp, openNowPlaying: Int) {
     val player = rememberPlayerUi(controller)
     val library by app.library.state.collectAsStateWithLifecycle()
     val driver by app.usbDriver.state.collectAsStateWithLifecycle()
@@ -181,6 +196,26 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     // keeps its own scroll position and dialogs in the state holder while it is on the stack.
     val stack = rememberSaveable(saver = RouteStackSaver) { mutableStateListOf<Route>() }
     val top = stack.lastOrNull()
+    // A tap on the media notification: Now playing, once the player is connected and has a song.
+    var handledNowPlaying by remember { mutableIntStateOf(0) }  // lives as long as the activity's counter
+    LaunchedEffect(openNowPlaying, player.hasMedia) {
+        if (openNowPlaying > handledNowPlaying && player.hasMedia) {
+            handledNowPlaying = openNowPlaying
+            if (stack.lastOrNull() != Route.NowPlayingRoute) stack.add(Route.NowPlayingRoute)
+        }
+    }
+    // Glass that appears in a page draws over the bars (GlassStacking): the bars enter composition
+    // again after it. Right after a tab or screen change that waits for the tab bar's lens to finish
+    // sliding (rebuilding the bar would cut it short); while scrolling it's at once.
+    var barsKey by remember { mutableIntStateOf(0) }
+    val navChangedAt = remember(tab, stack.size) { System.currentTimeMillis() }
+    val glassEpoch = GlassStacking.epoch
+    LaunchedEffect(glassEpoch) {
+        if (glassEpoch == 0) return@LaunchedEffect
+        val sinceNav = System.currentTimeMillis() - navChangedAt
+        if (sinceNav < 450) delay(450 - sinceNav)
+        barsKey++
+    }
     val screenStates = rememberSaveableStateHolder()
     fun screenKey(depth: Int, r: Route?) = if (r == null) "tab:${tab.name}" else "$depth:${r.encode()}"
     fun pop() {
@@ -308,7 +343,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                 expandedHeight = if (window.short) 56.dp else TopAppBarDefaults.TopAppBarExpandedHeight,
             )
         },
-        bottomBar = {
+        bottomBar = { key(barsKey) {
             val showMini = player.hasMedia && top != Route.NowPlayingRoute
             val showTabs = top == null
             val tabItems: @Composable RowScope.() -> Unit = {
@@ -349,7 +384,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                     if (showTabs) NavigationBar(Modifier.widthIn(max = 560.dp), content = tabItems)
                 }
             }
-        },
+        } },
     ) { padding ->
         // The content runs under the bottom bars (the glass refracts it); lists pad their end instead.
         val dir = LocalLayoutDirection.current
@@ -417,6 +452,8 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                             onReplayGain = { replayGainMode = it; ReplayGain.setMode(app, it) },
                             backdropStrength = backdropStrength,
                             onBackdropStrength = { backdropStrength = it; BackdropSettings.setStrength(app, it) },
+                            glassFrost = GlassFrost.level,
+                            onGlassFrost = { GlassFrost.level = it; BackdropSettings.setFrost(app, it) },
                             dspOn = dspParams.processes,
                             onOpenDsp = { stack.add(Route.DspRoute) },
                             onProbe = { cb -> app.usbDriver.probe(cb) },
@@ -456,7 +493,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
 @Composable
 private fun MiniPlayer(player: PlayerUi, modifier: Modifier = Modifier, onOpen: () -> Unit) {
     // A floating glass panel; tapping it opens Now playing.
-    GlassSurface(onClick = onOpen, modifier = modifier.padding(horizontal = 12.dp, vertical = 4.dp), shape = RoundedCornerShape(22.dp)) {
+    GlassSurface(onClick = onOpen, modifier = modifier.padding(horizontal = 12.dp, vertical = 4.dp), shape = RoundedCornerShape(22.dp), glass = AppGlass.panel) {
         Column {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),

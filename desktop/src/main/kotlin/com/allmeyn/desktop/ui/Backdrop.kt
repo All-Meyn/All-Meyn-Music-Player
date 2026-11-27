@@ -117,6 +117,10 @@ object BackdropSettings {
     private val prefs: Preferences = Preferences.userRoot().node("com/allmeyn/desktop")
     fun strength(): Int = prefs.getInt("backdropStrength", DEFAULT).coerceIn(0, 100)
     fun setStrength(value: Int) = prefs.putInt("backdropStrength", value.coerceIn(0, 100))
+
+    /** Settings → Appearance → Glass frosting, 0–100 (GlassFrost). */
+    fun frost(): Int = prefs.getInt("glassFrost", com.allmeyn.player.ui.GlassFrost.DEFAULT).coerceIn(0, 100)
+    fun setFrost(value: Int) = prefs.putInt("glassFrost", value.coerceIn(0, 100))
 }
 
 private object BackdropMemory {

@@ -111,10 +111,10 @@ fun PlayShuffleRow(tracks: List<Track>, player: PlayerUi, sidePadding: Dp = 16.d
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Button(onClick = { player.playTracks(tracks, 0) }, enabled = tracks.isNotEmpty()) {
+        Button(onClick = { player.playTracks(tracks, 0) }, enabled = tracks.isNotEmpty(), glass = AppGlass.prominent()) {
             Icon(PlayerIcons.Play, null); Text("Play", Modifier.padding(start = 4.dp))
         }
-        OutlinedButton(onClick = { player.shuffleTracks(tracks) }, enabled = tracks.isNotEmpty()) {
+        OutlinedButton(onClick = { player.shuffleTracks(tracks) }, enabled = tracks.isNotEmpty(), glass = AppGlass.regular) {
             Icon(PlayerIcons.Shuffle, null); Text("Shuffle", Modifier.padding(start = 4.dp))
         }
         extra()
@@ -288,7 +288,7 @@ fun TrackRow(
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, glass = AppGlass.panel) {
             DropdownMenuItem(text = { Text("Play next") }, onClick = { menu = false; player.playNext(track) })
             DropdownMenuItem(text = { Text("Add to queue") }, onClick = { menu = false; player.addToQueue(track) })
             DropdownMenuItem(text = { Text("Add to playlist…") }, onClick = { menu = false; addToPlaylist(listOf(track)) })

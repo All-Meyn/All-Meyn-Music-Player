@@ -66,7 +66,7 @@ fun PlaylistsList(playlists: List<Playlist>, byUri: Map<String, Track>, onOpen: 
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = belowBars(bottom = 8.dp)) {
         item {
-            Button(onClick = { naming = true }, modifier = Modifier.padding(16.dp)) {
+            Button(onClick = { naming = true }, modifier = Modifier.padding(16.dp), glass = AppGlass.prominent()) {
                 Icon(Icons.Filled.Add, null); Text("New playlist", Modifier.padding(start = 4.dp))
             }
         }
@@ -118,7 +118,7 @@ fun PlaylistDetail(
             ) {
                 Column {
                     IconButton(onClick = { menu = true }) { Icon(Icons.Filled.MoreVert, "Playlist options") }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }, glass = AppGlass.panel) {
                         DropdownMenuItem(text = { Text("Rename") }, onClick = { menu = false; renaming = true })
                         DropdownMenuItem(text = { Text("Delete playlist") }, onClick = { menu = false; confirmDelete = true })
                     }
@@ -156,6 +156,7 @@ fun PlaylistDetail(
     if (renaming) NameDialog("Rename playlist", playlist.name, onDismiss = { renaming = false }) { renaming = false; onRename(it) }
     if (confirmDelete) {
         AlertDialog(
+            glass = AppGlass.panel,
             onDismissRequest = { confirmDelete = false },
             title = { Text("Delete \"${playlist.name}\"?") },
             text = { Text("The songs stay in your library.") },
@@ -180,6 +181,7 @@ fun AddToPlaylistDialog(
         return
     }
     AlertDialog(
+        glass = AppGlass.panel,
         onDismissRequest = onDismiss,
         title = { Text(if (tracks.size == 1) "Add \"${tracks[0].title}\" to" else "Add ${countOf(tracks.size, "song")} to") },
         text = {
@@ -209,6 +211,7 @@ fun NameDialog(title: String, initial: String, onDismiss: () -> Unit, onConfirm:
     val focus = remember { FocusRequester() }
     LaunchedEffect(Unit) { focus.requestFocus() }
     AlertDialog(
+        glass = AppGlass.panel,
         onDismissRequest = onDismiss,
         title = { Text(title) },
         text = {

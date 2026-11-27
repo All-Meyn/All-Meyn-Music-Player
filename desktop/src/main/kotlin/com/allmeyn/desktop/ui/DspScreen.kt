@@ -1,5 +1,6 @@
 package com.allmeyn.desktop.ui
 
+import com.allmeyn.player.ui.AppGlass
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -296,7 +297,7 @@ fun DspScreen(params: DspParams, outputEqs: OutputEqStore, currentOutput: Output
                     color = if (peak > 1f) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
                 )
             }
-            OutlinedButton(onClick = { onChange { DspParams(enabled = it.enabled) } }) { Text("Reset to defaults") }
+            OutlinedButton(onClick = { onChange { DspParams(enabled = it.enabled) } }, glass = AppGlass.regular) { Text("Reset to defaults") }
         }
     }
 }

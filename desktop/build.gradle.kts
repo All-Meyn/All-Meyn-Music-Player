@@ -24,7 +24,7 @@ val sharedSources = tasks.register<Sync>("sharedSources") {
         "com/allmeyn/player/dsp/EqProfile.kt", "com/allmeyn/player/ui/HeadphoneEqEditor.kt",
         "com/allmeyn/player/dsp/ConvolutionEq.kt", "com/allmeyn/player/dsp/ConvolutionFiles.kt",
         "com/allmeyn/player/dsp/OpraPresets.kt", "com/allmeyn/player/ui/OpraPresetPicker.kt",
-        "com/allmeyn/player/dsp/OutputEqs.kt") }
+        "com/allmeyn/player/dsp/OutputEqs.kt", "com/allmeyn/player/ui/GlassFrost.kt") }
     into(layout.buildDirectory.dir("shared-src"))
 }
 kotlin.sourceSets.main { kotlin.srcDir(sharedSources) }

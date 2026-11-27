@@ -83,7 +83,7 @@ val MusicFolderUri = DocumentsContract.buildDocumentUri("com.android.externalsto
 @OptIn(ExperimentalMaterial3Api::class) // the glass sheet mirrors Material 3's experimental sheet API
 @Composable
 fun ChooseFolderSheet(onContinue: () -> Unit, onDismiss: () -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), glass = AppGlass.panel) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -102,7 +102,7 @@ fun ChooseFolderSheet(onContinue: () -> Unit, onDismiss: () -> Unit) {
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onDismiss) { Text("Not now") }
-                Button(onClick = onContinue) { Text("Continue") }
+                Button(onClick = onContinue, glass = AppGlass.prominent(onPanel = true)) { Text("Continue") }
             }
             Text(
                 stringResource(R.string.tagline), style = MaterialTheme.typography.labelSmall,

@@ -1,6 +1,9 @@
 package com.allmeyn.player.playback
 
+import android.app.PendingIntent
 import android.content.Intent
+import com.allmeyn.player.ui.ACTION_OPEN_NOW_PLAYING
+import com.allmeyn.player.ui.MainActivity
 import android.content.SharedPreferences
 import androidx.media3.common.Tracks
 import android.net.Uri
@@ -72,7 +75,18 @@ class PlaybackService : MediaSessionService() {
         // Volume keys / system volume slider drive the DAC's hardware volume while the driver is on.
         val sessionPlayer = DacVolumePlayer(player, driver)
         dacVolumePlayer = sessionPlayer
-        session = MediaSession.Builder(this, sessionPlayer).build()
+        session = MediaSession.Builder(this, sessionPlayer)
+            // Tapping the media notification (or the lock screen player) opens the app on Now playing.
+            .setSessionActivity(
+                PendingIntent.getActivity(
+                    this, 0,
+                    Intent(this, MainActivity::class.java)
+                        .setAction(ACTION_OPEN_NOW_PLAYING)
+                        .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP),
+                    PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+                ),
+            )
+            .build()
 
         val listener = object : UsbAudioDriver.Listener {
             // Taking the DAC from Android looks like a headphone unplug ("audio becoming noisy"),
