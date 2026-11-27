@@ -118,7 +118,7 @@ fun EmptyState(
         }
         if (action != null) {
             Spacer(Modifier.height(16.dp))
-            Button(onClick = onAction) { Text(action) }
+            Button(onClick = onAction, glass = AppGlass.prominent()) { Text(action) }
         }
     }
 }

@@ -1,5 +1,7 @@
 package com.allmeyn.desktop.ui
 
+import com.allmeyn.player.ui.GlassFrost
+import com.allmeyn.player.ui.AppGlass
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -264,6 +266,8 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                             },
                             replayGain = replayGain,
                             backdrop = backdrop,
+                            glassFrost = GlassFrost.level,
+                            onGlassFrostChange = { GlassFrost.level = it; BackdropSettings.setFrost(it) },
                             mediaKeys = mediaKeys,
                             mediaKeysTaken = mediaKeysTaken,
                             onMediaKeysChange = { mediaKeys = it; MediaKeysSetting.setEnabled(it) },
@@ -308,7 +312,7 @@ fun PlayerBar(player: PlayerController, output: OutputSettings, onOpenQueue: () 
     val track = player.current
     // A floating glass bar, as the Android mini player; its own controls are plain Material (they
     // draw on the glass, so no glass sits inside glass).
-    GlassSurface(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp).height(92.dp), shape = RoundedCornerShape(26.dp)) {
+    GlassSurface(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp).height(92.dp), shape = RoundedCornerShape(26.dp), glass = AppGlass.panel) {
     Row(
         Modifier.fillMaxSize().padding(horizontal = 16.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -129,7 +129,7 @@ private fun NowPlayingDetails(
                 Icon(PlayerIcons.Shuffle, "Shuffle", tint = if (player.shuffle) on else off)
             }
             IconButton(onClick = { player.previous() }) { Icon(PlayerIcons.Previous, "Previous", Modifier.size(36.dp)) }
-            FilledIconButton(onClick = { player.togglePlay() }, modifier = Modifier.size(72.dp)) {
+            FilledIconButton(onClick = { player.togglePlay() }, modifier = Modifier.size(72.dp), glass = AppGlass.prominent()) {
                 Icon(if (player.isPlaying) PlayerIcons.Pause else PlayerIcons.Play, "Play/pause", Modifier.size(40.dp))
             }
             IconButton(onClick = { player.next() }) { Icon(PlayerIcons.Next, "Next", Modifier.size(36.dp)) }

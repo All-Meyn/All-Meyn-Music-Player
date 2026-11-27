@@ -1,5 +1,7 @@
 package com.allmeyn.desktop.ui
 
+import com.allmeyn.player.ui.GlassFrostSetting
+import com.allmeyn.player.ui.AppGlass
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -58,6 +60,8 @@ fun SettingsScreen(
     replayGain: ReplayGainMode,
     backdrop: Int,
     onBackdropChange: (Int) -> Unit,
+    glassFrost: Int,
+    onGlassFrostChange: (Int) -> Unit,
     mediaKeys: Boolean,
     mediaKeysTaken: Int?,
     onMediaKeysChange: (Boolean) -> Unit,
@@ -81,8 +85,8 @@ fun SettingsScreen(
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = onAddFolder, enabled = library.scanProgress == null) { Text("Add folder…") }
-                    OutlinedButton(onClick = onRescan, enabled = library.scanProgress == null && library.folders.isNotEmpty()) { Text("Rescan") }
+                    Button(onClick = onAddFolder, enabled = library.scanProgress == null, glass = AppGlass.prominent()) { Text("Add folder…") }
+                    OutlinedButton(onClick = onRescan, enabled = library.scanProgress == null && library.folders.isNotEmpty(), glass = AppGlass.regular) { Text("Rescan") }
                     val p = library.scanProgress
                     Text(
                         if (p != null) "Reading ${p.first} / ${p.second}…" else "${library.view.tracks.size} songs, ${library.view.albums.size} albums",
@@ -104,6 +108,7 @@ fun SettingsScreen(
                     "How much of the playing song's cover shows behind the app (blurred, turning slowly while music plays).",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                GlassFrostSetting(glassFrost, onGlassFrostChange)
             }
             Panel("Keyboard") {
                 Row(verticalAlignment = Alignment.CenterVertically) {

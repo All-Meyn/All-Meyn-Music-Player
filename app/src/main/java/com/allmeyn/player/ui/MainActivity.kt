@@ -97,6 +97,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        GlassFrost.level = BackdropSettings.frost(this)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -417,6 +418,8 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                             onReplayGain = { replayGainMode = it; ReplayGain.setMode(app, it) },
                             backdropStrength = backdropStrength,
                             onBackdropStrength = { backdropStrength = it; BackdropSettings.setStrength(app, it) },
+                            glassFrost = GlassFrost.level,
+                            onGlassFrost = { GlassFrost.level = it; BackdropSettings.setFrost(app, it) },
                             dspOn = dspParams.processes,
                             onOpenDsp = { stack.add(Route.DspRoute) },
                             onProbe = { cb -> app.usbDriver.probe(cb) },
@@ -456,7 +459,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
 @Composable
 private fun MiniPlayer(player: PlayerUi, modifier: Modifier = Modifier, onOpen: () -> Unit) {
     // A floating glass panel; tapping it opens Now playing.
-    GlassSurface(onClick = onOpen, modifier = modifier.padding(horizontal = 12.dp, vertical = 4.dp), shape = RoundedCornerShape(22.dp)) {
+    GlassSurface(onClick = onOpen, modifier = modifier.padding(horizontal = 12.dp, vertical = 4.dp), shape = RoundedCornerShape(22.dp), glass = AppGlass.panel) {
         Column {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
