@@ -39,11 +39,11 @@ import com.allmeyn.player.dsp.OpraPresets
 
 /**
  * Pick a headphone EQ preset from OPRA's bundled list: search, then tap one. [presets] is null while
- * the list loads. Carries OPRA's attribution (logo, description, link) as its README asks; each
+ * the list loads ([error] says why it couldn't). Carries OPRA's attribution (logo, description, link) as its README asks; each
  * preset's creator is shown first.
  */
 @Composable
-fun OpraPresetPicker(presets: List<OpraPreset>?, logo: ImageBitmap?, onPick: (OpraPreset) -> Unit, onDismiss: () -> Unit) {
+fun OpraPresetPicker(presets: List<OpraPreset>?, error: String?, logo: ImageBitmap?, onPick: (OpraPreset) -> Unit, onDismiss: () -> Unit) {
     var query by remember { mutableStateOf("") }
     val shown = remember(presets, query) { presets?.let { OpraPresets.search(it, query) } }
     Dialog(onDismissRequest = onDismiss) {
@@ -55,6 +55,7 @@ fun OpraPresetPicker(presets: List<OpraPreset>?, logo: ImageBitmap?, onPick: (Op
                     label = { Text("Brand or model, e.g. HD 650") }, modifier = Modifier.fillMaxWidth(),
                 )
                 when {
+                    error != null -> Text(error, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                     shown == null -> Text("Loading presets…", style = MaterialTheme.typography.bodySmall)
                     shown.isEmpty() -> Text("No presets match.", style = MaterialTheme.typography.bodySmall)
                     else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 380.dp)) {

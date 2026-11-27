@@ -1,5 +1,6 @@
 package com.allmeyn.player.ui
 
+import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,6 +67,10 @@ import kotlin.math.log10
 import kotlin.math.roundToInt
 
 private val BAND_NAMES = listOf("LF", "LMF", "HMF", "HF")
+
+/** The bundled OPRA presets: the build stores them unzipped as presets.tsv; the .gz name is taken too, in case a build keeps it. */
+internal fun openOpraPresets(context: Context): java.io.InputStream =
+    runCatching { context.assets.open(OpraPresets.ASSET) }.getOrElse { context.assets.open(OpraPresets.ASSET + ".gz") }
 
 /**
  * The DSP chain: master switch, processor order (drag), and each processor's settings and meters.
@@ -259,7 +264,7 @@ fun DspScreen(params: DspParams, outputs: OutputMonitor, onChange: ((DspParams) 
                     },
                     onSave = { savedEqs = eqStore.save(p.eq); eqNotes = listOf("Saved “${p.eq.name}”.") },
                     onDelete = { name -> savedEqs = eqStore.delete(name) },
-                    loadPresets = { withContext(Dispatchers.IO) { OpraPresets.load { context.assets.open(OpraPresets.ASSET) } } },
+                    loadPresets = { withContext(Dispatchers.IO) { OpraPresets.load { openOpraPresets(context) } } },
                     opraLogo = opraLogo,
                 )
             }

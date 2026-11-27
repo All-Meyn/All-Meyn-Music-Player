@@ -36,6 +36,13 @@ class OpraPresetsTest {
         assertTrue(all.any { it.author == "oratory1990" } && all.any { it.author == "Rtings/AutoEQ" })
     }
 
+    // The Android build unzips the asset (the app holds plain text); Windows keeps it gzipped.
+    @Test fun readsPlainOrGzipped() {
+        val plain = java.util.zip.GZIPInputStream(File("src/main/assets/opra/presets.tsv.gz").inputStream()).use { it.readBytes() }
+        assertEquals(all.size, OpraPresets.read(plain.inputStream()).size)
+        try { OpraPresets.read("# nothing\n".byteInputStream()); org.junit.Assert.fail() } catch (_: java.io.IOException) {}
+    }
+
     @Test fun search() {
         val hits = OpraPresets.search(all, "hd 650")
         assertTrue(hits.isNotEmpty())

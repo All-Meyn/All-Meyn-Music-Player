@@ -45,6 +45,7 @@ import com.allmeyn.player.dsp.OpraPresets
 import com.wexpa.liquidglass.material3.Slider
 import com.wexpa.liquidglass.material3.Switch
 import java.util.Locale
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.ln
@@ -77,10 +78,22 @@ fun HeadphoneEqEditor(
 ) {
     var picking by remember { mutableStateOf(false) }
     var presets by remember { mutableStateOf<List<OpraPreset>?>(null) }
+    var presetError by remember { mutableStateOf<String?>(null) }
     var picked by remember { mutableStateOf<OpraPreset?>(null) }
     if (picking) {
-        LaunchedEffect(Unit) { if (presets == null) presets = runCatching { loadPresets() }.getOrDefault(emptyList()) }
-        OpraPresetPicker(presets, opraLogo, onPick = { p -> picking = false; picked = p; onProfile(p.profile) }, onDismiss = { picking = false })
+        LaunchedEffect(Unit) {
+            if (presets == null) {
+                presetError = null
+                try {
+                    presets = loadPresets()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    presetError = "Couldn't load the presets: ${e.message ?: e.javaClass.simpleName}"
+                }
+            }
+        }
+        OpraPresetPicker(presets, presetError, opraLogo, onPick = { p -> picking = false; picked = p; onProfile(p.profile) }, onDismiss = { picking = false })
     }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {

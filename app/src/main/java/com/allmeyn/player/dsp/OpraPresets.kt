@@ -23,8 +23,12 @@ data class OpraPreset(
 }
 
 object OpraPresets {
-    /** Android asset path; on Windows the same file is the resource "/opra_presets.tsv.gz". */
-    const val ASSET = "opra/presets.tsv.gz"
+    /**
+     * Android asset path. The Android build unzips ".gz" assets and drops the suffix, so the app
+     * holds "opra/presets.tsv" (plain text); on Windows the same file is the resource
+     * "/opra_presets.tsv.gz", still gzipped. [read] takes either.
+     */
+    const val ASSET = "opra/presets.tsv"
     const val REPO_URL = "https://github.com/opra-project/OPRA"
     const val LICENSE_URL = "https://creativecommons.org/licenses/by-sa/4.0/"
     const val DESCRIPTION = "OPRA is an open, community-maintained directory of product information and EQ " +
@@ -34,11 +38,19 @@ object OpraPresets {
 
     /** The bundled list, read once ([open] opens the gzipped file). Call off the UI thread. */
     fun load(open: () -> InputStream): List<OpraPreset> =
-        loaded ?: synchronized(this) { loaded ?: open().use(::read).also { loaded = it } }
+        loaded ?: synchronized(this) { loaded ?: open().use { read(it) }.also { loaded = it } }
 
-    /** Reads the bundled (gzipped) file. Lines that don't parse are skipped. */
-    fun read(gzipped: InputStream): List<OpraPreset> =
-        GZIPInputStream(gzipped).bufferedReader(Charsets.UTF_8).useLines { lines -> lines.mapNotNull(::parseLine).toList() }
+    /** Reads the bundled file, gzipped or plain. Lines that don't parse are skipped; none at all is an error. */
+    fun read(input: InputStream): List<OpraPreset> {
+        val buffered = java.io.BufferedInputStream(input)
+        buffered.mark(2)
+        val gzipped = buffered.read() == 0x1f && buffered.read() == 0x8b
+        buffered.reset()
+        val text = if (gzipped) GZIPInputStream(buffered) else buffered
+        val presets = text.bufferedReader(Charsets.UTF_8).useLines { lines -> lines.mapNotNull(::parseLine).toList() }
+        if (presets.isEmpty()) throw java.io.IOException("The preset list is empty or unreadable.")
+        return presets
+    }
 
     /** One line: vendor, product, kind, author, details, preamp, bands ("PK 105 -1.4 0.7;…"), tab separated. */
     fun parseLine(line: String): OpraPreset? {
