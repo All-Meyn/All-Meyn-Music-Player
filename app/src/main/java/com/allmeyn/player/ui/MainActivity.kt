@@ -188,12 +188,11 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     // again after it. Right after a tab or screen change that waits for the tab bar's lens to finish
     // sliding (rebuilding the bar would cut it short); while scrolling it's at once.
     var barsKey by remember { mutableIntStateOf(0) }
-    val navChangedAt = remember { longArrayOf(0L) }
-    remember(tab, stack.size) { navChangedAt[0] = System.currentTimeMillis() }
+    val navChangedAt = remember(tab, stack.size) { System.currentTimeMillis() }
     val glassEpoch = GlassStacking.epoch
     LaunchedEffect(glassEpoch) {
         if (glassEpoch == 0) return@LaunchedEffect
-        val sinceNav = System.currentTimeMillis() - navChangedAt[0]
+        val sinceNav = System.currentTimeMillis() - navChangedAt
         if (sinceNav < 450) delay(450 - sinceNav)
         barsKey++
     }
