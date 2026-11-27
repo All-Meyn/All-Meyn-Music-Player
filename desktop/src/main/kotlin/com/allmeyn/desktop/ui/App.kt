@@ -45,6 +45,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.allmeyn.desktop.engine.DspStore
+import com.allmeyn.player.dsp.DspParams
+import com.allmeyn.player.dsp.OutputEq
+import com.allmeyn.player.dsp.OutputEqStore
+import com.allmeyn.player.dsp.OutputId
+import java.io.File
 import com.allmeyn.desktop.engine.OutputSettings
 import com.allmeyn.desktop.engine.ReplayGainMode
 import com.allmeyn.desktop.engine.PlayState
@@ -72,6 +77,33 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
     var replayGain by remember { mutableStateOf(ReplayGainMode.load().also { it.apply(output) }) }
     var backdrop by remember { mutableStateOf(BackdropSettings.strength()) }
     var dsp by remember { mutableStateOf(DspStore.load().also(DspStore::apply)) }
+    // The headphone EQ follows the output (each output keeps its own; output_eqs.txt).
+    val outputEqs = remember { OutputEqStore(File(DesktopLibrary.defaultDataDir(), "output_eqs.txt")) }
+    var currentOutput by remember { mutableStateOf<OutputId?>(null) }
+    fun setDsp(change: DspParams) {
+        val old = dsp
+        val new = change.sanitized()
+        if (new == old) return
+        dsp = new
+        DspStore.save(new)
+        DspStore.apply(new)
+        // Processing on/off changes how the song reaches the DAC (DSD as PCM, no bit-perfect
+        // claim): reopen it, from the same spot.
+        if (new.processes != old.processes) player.reopen()
+        if (OutputEq.of(old) != OutputEq.of(new)) currentOutput?.let { outputEqs.remember(it, new) }
+    }
+    LaunchedEffect(output) {
+        while (true) {
+            val id = withContext(Dispatchers.IO) { outputIdOf(output) }
+            if (id != null && id != currentOutput) {
+                currentOutput = id
+                setDsp(outputEqs.switchTo(id, dsp))
+            }
+            // A chosen device stays the same; "Windows' default" can change outside the app.
+            if (output.deviceId.isNotEmpty()) break
+            delay(5000)
+        }
+    }
     val stack = remember { mutableStateListOf<Route>(Route.Albums) }
     var query by remember { mutableStateOf("") }
     LaunchedEffect(Unit) { library.start() }
@@ -220,18 +252,7 @@ fun App(library: DesktopLibrary, player: PlayerController, pickFolder: () -> Str
                         is Route.PlaylistPage -> library.playlists.all.firstOrNull { it.id == route.id }
                             ?.let { PlaylistPage(it, library.playlists, view, player, onBack = ::back) } ?: Missing(::back)
                         Route.NowPlaying -> NowPlayingScreen(player, replayGain, output, onBack = { if (stack.size > 1) back() else go(Route.Albums) })
-                        Route.Dsp -> DspScreen(dsp) { change ->
-                            val old = dsp
-                            val new = change(old).sanitized()
-                            if (new != old) {
-                                dsp = new
-                                DspStore.save(new)
-                                DspStore.apply(new)
-                                // Processing on/off changes how the song reaches the DAC (DSD as PCM,
-                                // no bit-perfect claim): reopen it, from the same spot.
-                                if (new.processes != old.processes) player.reopen()
-                            }
-                        }
+                        Route.Dsp -> DspScreen(dsp, outputEqs, currentOutput) { change -> setDsp(change(dsp)) }
                         Route.Settings -> SettingsScreen(
                             library, output,
                             onOutputChange = { new ->
@@ -352,5 +373,20 @@ fun PlayerBar(player: PlayerController, output: OutputSettings, onOpenQueue: () 
             IconButton(onClick = onOpenQueue) { ControlGlyph(ControlIcon.QUEUE, MaterialTheme.colorScheme.onSurfaceVariant, 18.dp) }
         }
     }
+    }
+}
+
+/** The output songs go to, for the EQ that follows it; null if Windows has none. Off the UI thread. */
+private fun outputIdOf(output: OutputSettings): OutputId? {
+    if (output.isAsio) {
+        val name = output.deviceId.removePrefix(OutputSettings.ASIO_PREFIX)
+        return OutputId(output.deviceId, "ASIO: $name")
+    }
+    val devices = NativeEngine.devices()
+    val d = if (output.deviceId.isEmpty()) devices.firstOrNull { it.isDefault } else devices.firstOrNull { it.id == output.deviceId }
+    return when {
+        d != null -> OutputId("wasapi:${d.id}", d.name)
+        output.deviceId.isNotEmpty() -> OutputId("wasapi:${output.deviceId}", "Output (not connected)")
+        else -> null
     }
 }

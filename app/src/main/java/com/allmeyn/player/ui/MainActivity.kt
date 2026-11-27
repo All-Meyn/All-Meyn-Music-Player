@@ -47,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -74,6 +75,7 @@ import com.allmeyn.player.AllMeynApp
 import com.allmeyn.player.decode.DecodeRegistry
 import com.allmeyn.player.playback.PlaybackService
 import com.allmeyn.player.playback.ReplayGain
+import com.allmeyn.player.dsp.DspParams
 import com.allmeyn.player.dsp.DspSettings
 import com.allmeyn.player.usb.UsbAudioDriver
 import com.google.common.util.concurrent.ListenableFuture
@@ -206,6 +208,13 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     var replayGainMode by remember { mutableStateOf(ReplayGain.mode(app)) }
     var backdropStrength by remember { mutableStateOf(BackdropSettings.strength(app)) }
     var dspParams by remember { mutableStateOf(DspSettings.live) }
+    // The EQ can also change without the DSP screen (it follows the output): keep the screen current.
+    DisposableEffect(Unit) {
+        val l: (DspParams, DspParams) -> Unit = { _, new -> dspParams = new }
+        DspSettings.addListener(l)
+        dspParams = DspSettings.live
+        onDispose { DspSettings.removeListener(l) }
+    }
     LaunchedEffect(Unit) {
         while (true) {
             peak = app.levelMeter.peak
@@ -387,7 +396,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                             onOpenArtist = { stack.add(Route.ArtistRoute(it.name)) },
                         )
                         Route.NowPlayingRoute -> NowPlaying(player, sourceLabel, peak, driver, route, gainLabel, dspParams.processes, app.usbDriver::setVolumeStep)
-                        Route.DspRoute -> DspScreen(dspParams) { change ->
+                        Route.DspRoute -> DspScreen(dspParams, app.outputs) { change ->
                             DspSettings.update(app, change)
                             dspParams = DspSettings.live
                         }

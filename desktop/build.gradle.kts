@@ -22,7 +22,9 @@ dependencies {
 val sharedSources = tasks.register<Sync>("sharedSources") {
     from("../app/src/main/java") { include("com/allmeyn/player/library/Models.kt", "com/allmeyn/player/dsp/DspParams.kt", "com/allmeyn/player/library/PlaylistOps.kt",
         "com/allmeyn/player/dsp/EqProfile.kt", "com/allmeyn/player/ui/HeadphoneEqEditor.kt",
-        "com/allmeyn/player/dsp/ConvolutionEq.kt", "com/allmeyn/player/dsp/ConvolutionFiles.kt") }
+        "com/allmeyn/player/dsp/ConvolutionEq.kt", "com/allmeyn/player/dsp/ConvolutionFiles.kt",
+        "com/allmeyn/player/dsp/OpraPresets.kt", "com/allmeyn/player/ui/OpraPresetPicker.kt",
+        "com/allmeyn/player/dsp/OutputEqs.kt") }
     into(layout.buildDirectory.dir("shared-src"))
 }
 kotlin.sourceSets.main { kotlin.srcDir(sharedSources) }
@@ -32,6 +34,9 @@ kotlin.sourceSets.main { kotlin.srcDir(sharedSources) }
 tasks.processResources {
     from("../app/src/main/res/drawable/ic_brand_mark.xml")
     from("../branding/play-store-icon-512.png") { rename { "all-meyn-icon.png" } }
+    // OPRA's headphone EQ presets and logo, the same files the Android app bundles.
+    from("../app/src/main/assets/opra/presets.tsv.gz") { rename { "opra_presets.tsv.gz" } }
+    from("../app/src/main/res/drawable-nodpi/opra_logo.png")
 }
 
 // The engine DLL is built by CI (desktop/native) into resources/windows-x64; tests that need it
