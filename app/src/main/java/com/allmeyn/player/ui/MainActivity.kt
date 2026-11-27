@@ -50,6 +50,8 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -178,6 +180,19 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
     fun added(name: String, n: Int) = Toast.makeText(context, "Added ${countOf(n, "song")} to $name", Toast.LENGTH_SHORT).show()
 
     var tab by rememberSaveable { mutableStateOf(Tab.Albums) }
+    // Glass that appears in a page draws over the bars (GlassStacking): the bars enter composition
+    // again after it. Right after a tab or screen change that waits for the tab bar's lens to finish
+    // sliding (rebuilding the bar would cut it short); while scrolling it's at once.
+    var barsKey by remember { mutableIntStateOf(0) }
+    val navChangedAt = remember { longArrayOf(0L) }
+    remember(tab, stack.size) { navChangedAt[0] = System.currentTimeMillis() }
+    val glassEpoch = GlassStacking.epoch
+    LaunchedEffect(glassEpoch) {
+        if (glassEpoch == 0) return@LaunchedEffect
+        val sinceNav = System.currentTimeMillis() - navChangedAt[0]
+        if (sinceNav < 450) delay(450 - sinceNav)
+        barsKey++
+    }
     // Saved, so folding, unfolding or rotating keeps the open screen; each screen (and each tab)
     // keeps its own scroll position and dialogs in the state holder while it is on the stack.
     val stack = rememberSaveable(saver = RouteStackSaver) { mutableStateListOf<Route>() }
@@ -309,7 +324,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                 expandedHeight = if (window.short) 56.dp else TopAppBarDefaults.TopAppBarExpandedHeight,
             )
         },
-        bottomBar = {
+        bottomBar = { key(barsKey) {
             val showMini = player.hasMedia && top != Route.NowPlayingRoute
             val showTabs = top == null
             val tabItems: @Composable RowScope.() -> Unit = {
@@ -350,7 +365,7 @@ private fun AppRoot(controller: MediaController?, app: AllMeynApp) {
                     if (showTabs) NavigationBar(Modifier.widthIn(max = 560.dp), content = tabItems)
                 }
             }
-        },
+        } },
     ) { padding ->
         // The content runs under the bottom bars (the glass refracts it); lists pad their end instead.
         val dir = LocalLayoutDirection.current

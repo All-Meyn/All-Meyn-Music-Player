@@ -5,6 +5,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
@@ -64,8 +65,11 @@ object AppGlass {
     internal fun control(frost: Int): Glass = set(frost).control
     internal fun panel(frost: Int): Glass = set(frost).panel
 
-    /** Plain glass: secondary buttons, chips (GlassMaterialDefaults.regular off a panel). */
-    val regular: Glass @Composable get() = set(GlassFrost.level).control
+    /** Plain glass: secondary buttons, chips (GlassMaterialDefaults.regular off a panel). Page glass: see [GlassStacking]. */
+    val regular: Glass @Composable get() {
+        GlassStacking.Appeared()
+        return set(GlassFrost.level).control
+    }
 
     /** Large surfaces: dialogs, menus, sheets, the mini player (GlassMaterialDefaults.panel). */
     val panel: Glass @Composable get() = set(GlassFrost.level).panel
@@ -73,7 +77,7 @@ object AppGlass {
     /** The main action: glass tinted with [color] (GlassMaterialDefaults.prominent). [onPanel]: inside a dialog or sheet. */
     @Composable
     fun prominent(color: Color = MaterialTheme.colorScheme.primary, onPanel: Boolean = false): Glass =
-        (if (onPanel) panel else regular).tint(color.copy(alpha = PROMINENT_ALPHA))
+        (if (onPanel) panel else regular).tint(color.copy(alpha = PROMINENT_ALPHA))  // regular: page glass
 
     private const val PROMINENT_ALPHA = 0.62f // GlassMaterialDefaults.ProminentAlpha
 
@@ -90,6 +94,26 @@ object AppGlass {
         outerContourFloor = if (dark) 0f else 0.25f,
         dispersion = 0f,
     )
+}
+
+/**
+ * The glass library draws glass in the order it enters composition, so a glass button that scrolls
+ * into view after the bars (Android's mini player and tab bar, which the pages scroll under) would draw
+ * over them. Page glass ([AppGlass.regular], [AppGlass.prominent] off a panel) counts here as it
+ * appears; the bars are keyed on [epoch], so they enter again, after it, and are back on top.
+ * (Windows has nothing under its player bar: nothing there reads it.)
+ */
+object GlassStacking {
+    var epoch by mutableIntStateOf(0)
+        private set
+
+    @Composable
+    internal fun Appeared() {
+        DisposableEffect(Unit) {
+            epoch++
+            onDispose { }
+        }
+    }
 }
 
 /** The Settings row: label, value and a 5 %-step slider (live while dragging). */
